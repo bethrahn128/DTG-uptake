@@ -1,0 +1,676 @@
+---
+title: "IeDEA SA256: DTG uptake: 03 RNA availability "
+subtitle: ""
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(fst, tidyverse, magrittr, kableExtra, report)
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Data
+
+## Base from `01_data-preps.Rmd`
+
+```{r}
+tblBAS <- as_tibble(read_fst("data/tblBAS.fst"))
+tblART <- as_tibble(read_fst("data/tblART.fst"))
+tblLAB_RNA <- as_tibble(read_fst("data/tblLAB_RNA.fst"))
+
+tblART %<>% 
+  mutate(dtg_ind = factor(dtg, levels = c(1, 0),
+                          labels = c("DTG", "Other ART"))) 
+```
+
+## Selection
+
+```{r}
+dtg_by_program <- tblART %>% 
+  group_by(program) %>% 
+  summarise(dtg_count = sum(dtg)) %>% 
+  ungroup() 
+
+stopifnot(nrow(tblBAS) == length(unique(tblBAS$patient)))
+
+tblART %<>% 
+  group_by(patient) %>% 
+  mutate(dtg_count = sum(dtg)) %>% 
+  ungroup() %>% 
+  filter(dtg_count > 0)
+
+tblBAS %<>% 
+  filter(dtg == 1) %>% 
+  mutate_if(is.factor, fct_drop)
+
+tblLAB_RNA %<>% 
+  filter(patient %in% tblBAS$patient) 
+```
+
+Limiting to `r nrow(tblBAS)` DTG patients from `r nrow(dtg_by_program)` cohorts with reasonable numbers.  
+
+## Any DTG received
+
+Patients across cohorts  
+
+```{r}
+sjPlot::plot_frq(tblBAS$program) + 
+  xlab("") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+<!-- ----------------------------------------------------- -->
+
+# DTG patients with viral load measurements in 12 months before start of DTG
+
+```{r}
+dtg_sd <- tblART %>% 
+  filter(dtg == 1) %>% 
+  select(patient, art_sd) %>% 
+  arrange(patient, art_sd) %>% 
+  group_by(patient) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  rename(dtg_sd = art_sd)
+
+tblLAB_RNA_dtg_12mo <- tblLAB_RNA %>% 
+  left_join(dtg_sd) %>% 
+  filter(rna_d > dtg_sd - 365) %>% 
+  filter(rna_d < dtg_sd)
+```
+
+```{r}
+tblBAS_dtg_rna_12mo <- tblBAS %>% 
+  left_join(tblLAB_RNA_dtg_12mo %>% 
+              select(patient, dtg_sd) %>% 
+              distinct()) %>% 
+  mutate(rna_available = if_else(!is.na(dtg_sd), "Yes", "No"))
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_dtg_rna_12mo$program,
+                 tblBAS_dtg_rna_12mo$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+```{r}
+tblBAS_dtg_rna_12mo %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal()
+```
+
+# Of those with measurement, who has <1000 copies/ml?
+
+```{r}
+tblLAB_RNA_below1000 <- tblBAS_dtg_rna_12mo %>% 
+  filter(rna_available == "Yes") %>% 
+  select(patient) %>% 
+  left_join(tblLAB_RNA_dtg_12mo) %>% 
+  filter(rna_d < dtg_sd) %>% 
+  mutate(distance = as.numeric(dtg_sd - rna_d)) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  mutate(below_1000 = if_else(rna_v < 1000, "Yes", "No")) %>% 
+  left_join(tblBAS %>% select(patient, program))
+```
+
+```{r}
+sjPlot::tab_xtab(tblLAB_RNA_below1000$program,
+                 tblLAB_RNA_below1000$below_1000,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+```{r}
+tblLAB_RNA_below1000 %>% 
+  ggplot(aes(x = below_1000)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal()
+```
+
+# Of those with measurement, who has <400 copies/ml?
+
+```{r}
+tblLAB_RNA_below400 <- tblBAS_dtg_rna_12mo %>% 
+  filter(rna_available == "Yes") %>% 
+  select(patient) %>% 
+  left_join(tblLAB_RNA_dtg_12mo) %>% 
+  filter(rna_d < dtg_sd) %>% 
+  mutate(distance = as.numeric(dtg_sd - rna_d)) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  mutate(below_400 = if_else(rna_v < 400, "Yes", "No")) %>% 
+  left_join(tblBAS %>% select(patient, program))
+```
+
+```{r}
+sjPlot::tab_xtab(tblLAB_RNA_below400$program,
+                 tblLAB_RNA_below400$below_400,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+```{r}
+tblLAB_RNA_below400 %>% 
+  ggplot(aes(x = below_400)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# DTG patients with viral load measurements after start of DTG
+
+```{r}
+tblLAB_RNA_dtg_post <- tblLAB_RNA %>% 
+  left_join(dtg_sd) %>% 
+  filter(rna_d > dtg_sd)
+```
+
+```{r}
+tblBAS_dtg_rna_post <- tblBAS %>% 
+  left_join(tblLAB_RNA_dtg_post %>% 
+              select(patient, dtg_sd) %>% 
+              distinct()) %>% 
+  mutate(rna_available = if_else(!is.na(dtg_sd), "Yes", "No"))
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_dtg_rna_post$program,
+                 tblBAS_dtg_rna_post$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+```{r}
+tblBAS_dtg_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL 6 months before - 2 weeks after start of DTG {.tabset}
+
+```{r}
+RNA2_6mo <- tblLAB_RNA %>% 
+  left_join(tblBAS %>% select(patient, dtg_min_pat)) %>% 
+  filter(rna_d > dtg_min_pat - 180) %>% 
+  filter(rna_d < dtg_min_pat + 14) %>% 
+  select(-dtg_min_pat)
+```
+
+```{r eval=FALSE, include=FALSE}
+# duplicated!
+dim(RNA2_6mo[duplicated(RNA2_6mo$patient),])[1]
+```
+
+```{r}
+BAS_6mo <- tblBAS %>% 
+  left_join(RNA2_6mo %>% 
+              select(patient) %>% 
+              distinct() %>% 
+              mutate(rna_available = 1)) %>% 
+  select(program, patient, dtg_min_pat, rna_available) %>% 
+  mutate(rna_available = if_else(!is.na(rna_available), "Yes", "No"))
+```
+
+```{r eval=FALSE, include=FALSE}
+# ok
+dim(BAS_6mo[duplicated(BAS_6mo$patient),])[1]
+```
+
+```{r}
+sjPlot::tab_xtab(BAS_6mo$program,
+                 BAS_6mo$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+BAS_6mo %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("RNA available") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+BAS_6mo %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() + 
+  xlab("RNA available") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL cats {.tabset}
+
+Of those with measurement before (defined above).   
+Using measurement closest to the start date if more available.  
+
+```{r}
+RNA_6mo_cat <- BAS_6mo %>% 
+  filter(rna_available == "Yes") %>% 
+  select(-rna_available) %>% 
+  left_join(RNA2_6mo) %>% 
+  mutate(distance = abs(as.numeric(dtg_min_pat - rna_d))) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  # one patient with +- same days!
+  group_by(patient) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() 
+```
+
+```{r eval=FALSE, include=FALSE}
+# ok
+dim(RNA_6mo_cat[duplicated(RNA_6mo_cat$patient),])[1]
+```
+
+```{r}
+sjPlot::tab_xtab(RNA_6mo_cat$program,
+                 RNA_6mo_cat$rna_v_cat2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+RNA_6mo_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("RNA") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+RNA_6mo_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA < 400") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL 6m after start of DTG {.tabset}
+
+Viral load available at 6 mo (4 to 8 mo) after DTG start, in those with ≥6 months’ follow up.  
+
+```{r}
+tblLAB_RNA_post <- tblLAB_RNA %>% 
+  left_join(tblBAS %>% 
+              filter(FU_day >= 180) %>% 
+              select(patient, dtg_min_pat)
+  ) %>% 
+  filter(rna_d > dtg_min_pat - 120) %>% 
+  filter(rna_d < dtg_min_pat + 240)
+```
+
+```{r}
+tblBAS_rna_post <- tblBAS %>% 
+  left_join(tblLAB_RNA_post %>% 
+              select(patient, dtg_min_pat) %>% 
+              distinct() %>% 
+              mutate(rna_available = 1)
+  ) %>% 
+  mutate(rna_available = if_else(!is.na(rna_available), "Yes", "No"))
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post$program,
+                 tblBAS_rna_post$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() +
+  xlab("RNA 6mo after DTG start") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA 6mo after DTG start") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL cats 6mo after DTG start  {.tabset}
+
+Of those with measurement after (defined above).   
+Using measurement closest to the start date if more available.  
+
+```{r}
+tblBAS_rna_post_cat <- tblBAS_rna_post %>% 
+  filter(rna_available == "Yes") %>% 
+  select(patient, program) %>% 
+  left_join(tblLAB_RNA_post) %>% 
+  mutate(distance = abs(as.numeric(dtg_min_pat - rna_d))) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  group_by(patient) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post_cat$program,
+                 tblBAS_rna_post_cat$rna_v_cat2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("RNA") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL 12mo after start of DTG {.tabset}
+
+Viral load available at 12 mo (8 to 18 mo) after DTG start, in those with ≥12 months’ follow up.  
+
+```{r}
+tblLAB_RNA_post <- tblLAB_RNA %>% 
+  left_join(tblBAS %>% 
+              filter(FU_day >= 360) %>% 
+              select(patient, dtg_min_pat)
+  ) %>% 
+  filter(rna_d > dtg_min_pat - 240) %>% 
+  filter(rna_d < dtg_min_pat + 540) 
+```
+
+```{r}
+tblBAS_rna_post <- tblBAS %>% 
+  left_join(tblLAB_RNA_post %>% 
+              select(patient, dtg_min_pat) %>% 
+              distinct() %>% 
+              mutate(rna_available = 1)
+  ) %>% 
+  mutate(rna_available = if_else(!is.na(rna_available), "Yes", "No"))
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post$program,
+                 tblBAS_rna_post$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() +
+  xlab("RNA 12 mo after DTG start") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA 12 mo after DTG start") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL cats 12mo after DTG start  {.tabset}
+
+Of those with measurement after (defined above).   
+Using measurement closest to the start date if more available.  
+
+```{r}
+tblBAS_rna_post_cat <- tblBAS_rna_post %>% 
+  filter(rna_available == "Yes") %>% 
+  select(patient, program) %>% 
+  left_join(tblLAB_RNA_post) %>% 
+  mutate(distance = abs(as.numeric(dtg_min_pat - rna_d))) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  group_by(patient) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post_cat$program,
+                 tblBAS_rna_post_cat$rna_v_cat2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("RNA") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL 4-12m after start of DTG {.tabset}
+
+Viral load available at 4 to 12 mo after DTG start, in those with ≥4 months’ follow up.  
+
+```{r}
+tblLAB_RNA_post <- tblLAB_RNA %>% 
+  left_join(tblBAS %>% 
+              filter(FU_day >= 120) %>% 
+              select(patient, dtg_min_pat)
+  ) %>% 
+  filter(rna_d > dtg_min_pat - 120) %>% 
+  filter(rna_d < dtg_min_pat + 240)
+```
+
+```{r}
+tblBAS_rna_post <- tblBAS %>% 
+  left_join(tblLAB_RNA_post %>% 
+              select(patient, dtg_min_pat) %>% 
+              distinct() %>% 
+              mutate(rna_available = 1)
+  ) %>% 
+  mutate(rna_available = if_else(!is.na(rna_available), "Yes", "No"))
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post$program,
+                 tblBAS_rna_post$rna_available,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() +
+  xlab("RNA after DTG start") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post %>% 
+  ggplot(aes(x = rna_available)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA after DTG start") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# VL cats 4-12mo after DTG start  {.tabset}
+
+Of those with measurement after (defined above).   
+Using measurement closest to the start date if more available.  
+
+```{r}
+tblBAS_rna_post_cat <- tblBAS_rna_post %>% 
+  filter(rna_available == "Yes") %>% 
+  select(patient, program) %>% 
+  left_join(tblLAB_RNA_post) %>% 
+  mutate(distance = abs(as.numeric(dtg_min_pat - rna_d))) %>% 
+  group_by(patient) %>% 
+  mutate(distance_min = min(distance)) %>% 
+  ungroup() %>% 
+  filter(distance_min == distance) %>% 
+  select(-distance) %>% 
+  group_by(patient) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()
+```
+
+```{r}
+sjPlot::tab_xtab(tblBAS_rna_post_cat$program,
+                 tblBAS_rna_post_cat$rna_v_cat2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Cohort specific
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("RNA") + ylab("Number of patients")
+```
+
+## Overall
+
+```{r}
+tblBAS_rna_post_cat %>% 
+  ggplot(aes(x = rna_v_cat2)) +
+  geom_bar() +
+  facet_wrap(vars(program)) +
+  theme_minimal() +
+  xlab("RNA") + ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

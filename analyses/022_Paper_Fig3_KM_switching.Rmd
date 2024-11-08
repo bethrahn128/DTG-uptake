@@ -1,0 +1,749 @@
+---
+title: "IeDEA SA256 DTG uptake: 03 Paper Fig 3 KM switching"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer, survMisc)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+library(patchwork)
+
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+
+```{r}
+
+#####################################################################
+# to adjust decimal places of categorical variables
+
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f %%)", FREQ, PCT))))
+}
+
+#####################################################################
+
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+```{r include=FALSE}
+tblBAS_2 = data.table(read_fst("data_temp/tblBAS_transition_v2_LTFU_who.fst"))
+
+```
+
+```{r include=FALSE}
+frq(tblBAS_2, sex_age2)
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+frq(tblBAS_2, sex_age2_txt)
+
+
+frq(tblBAS_2, sex_age3)
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+frq(tblBAS_2, sex_age3_txt)
+```
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+table1::label(tblBAS_2$dtg_switch_txt) <- "DTG switch"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+table1::label(tblBAS_2$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3_txt) <- "Sex & age group"
+```
+
+
+
+```{r}
+FU_time <- tblBAS_2 %>% select(patient, country, ctry, program, sex, 
+                    age, age_cat1, age_cat2,  age_cat3, 
+                    sex_age1, sex_age2, sex_age2_txt, sex_age3, sex_age3_txt,
+                    start_fu, end_fu, FU_day, time,
+                    dtg_switch, dtg_switch_txt, 
+                    max_close_d, dtg_switch_txt, dtg_status_outcome, dtg_status_outcome_txt, 
+                     dtg_recomend_d, dtg_recomend_t, 
+                    time_t, time_t2,
+                    alt_start_fu, alt_end_fu, 
+                    alt_start_fu2, alt_end_fu2, 
+                    alt_start_fu3, alt_end_fu3)
+
+```
+
+
+
+```{r include=FALSE}
+
+#https://argoshare.is.ed.ac.uk/healthyr_book/recode-the-data-1.html
+
+##########################################
+# Recode
+
+FU_time <- FU_time %>% mutate(dtg_comp = ifelse(dtg_switch ==0 & dtg_status_outcome_txt != "RIC", 1, 0))
+
+FU_time <- FU_time %>% mutate(dtg_comp_b = ifelse(dtg_switch ==0 & dtg_status_outcome_txt == "RIC", 0, 1))
+
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_comp)
+frq(FU_time, dtg_comp_b)
+
+FU_time = as.data.table(FU_time)
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_switch)  # 1 == started DTG, 0 == didn't start DTG
+frq(FU_time, dtg_comp)  # 1 == competing risk; prevented pat from being at risk to start dtg 
+
+FU_time <- FU_time %>% 
+  mutate(
+    
+  # Overall survival (alive ==0,  dtg ==1)
+  dtg_switch_txt_os = case_when(
+    dtg_switch == 1 ~ 1,  #started DTG
+    dtg_switch == 0 ~ 0), #didn't start DTG
+
+  # Diease-specific survival (alive ==0, dtg ==1)
+  dtg_switch_txt_dss = case_when(
+    dtg_status_outcome == 4 ~ 0, #still alive not on dtg
+    dtg_switch == 1 ~ 1,         #started DTG
+    dtg_comp == 1 ~ 0),      # censored
+  
+   # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 4), # had other competing risk outcome Transfer
+  
+     # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr1b = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 4, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 1, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==2)
+  dtg_switch_txt_crr2 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 2, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+   
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==0)
+  dtg_switch_txt_crr3 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 0, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 0, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 0), # had other competing risk outcome Transfer
+   ) 
+
+
+
+# factor variables
+FU_time$dtg_switch_txt_crr.factor <- factor(FU_time$dtg_switch_txt_crr, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("No DTG", "DTG switch", "Death", "LTFU", "Transfer"))
+
+FU_time$dtg_switch_txt_crr1b.factor <- factor(FU_time$dtg_switch_txt_crr1b, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("a", "b", "c", "d", "e"))
+
+FU_time$dtg_switch_txt_crr2.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("a", "c", "b"))
+
+FU_time$dtg_switch_txt_crr2b.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("RIC", "DTG switch", "competing risks"))
+
+FU_time$dtg_switch_txt_crr3b.factor <- factor(FU_time$dtg_switch_txt_crr3,
+levels=c("0", "1"),
+labels = c("No Switch", "DTG switch"))
+
+
+
+frq(FU_time, dtg_switch_txt_os)
+frq(FU_time, dtg_switch_txt_dss)
+frq(FU_time, dtg_switch_txt_crr)
+frq(FU_time, dtg_switch_txt_crr.factor)
+frq(FU_time, dtg_switch_txt_crr2)
+frq(FU_time, dtg_switch_txt_crr2.factor)
+frq(FU_time, dtg_switch_txt_crr2b.factor)
+frq(FU_time, dtg_switch_txt_crr3)
+frq(FU_time, dtg_switch_txt_crr3b.factor)
+   
+```
+
+```{r}
+# Label and recode other variables
+FU_time <- FU_time %>%
+ mutate(sex2 = factor(sex) %>% 
+ fct_recode("1" = "Male",
+            "0" = "Female")) %>%
+  mutate(dtg.factor = factor(dtg_switch))
+
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v1a.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+<!-- ----------------------------------------------------- -->
+
+# Transition cohort: baseline characteristics
+
+
+## Country by sex
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Country by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex_age2_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Median time on ART (months)
+
+
+```{r}
+
+tblBAS_2b <- tblBAS_2 %>% mutate(timeonART_d = as.numeric(dtg_recomend_d - recart_d)) %>%
+  mutate(timeonART_m = timeonART_d/30.5) 
+  
+
+# overall
+timeonART_sex <- tblBAS_2b %>% 
+  group_by(sex_age2_txt) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+  summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+  
+
+# by country
+timeonART_ctry_sex <- tblBAS_2b %>% 
+  group_by(ctry, country, sex_age2_txt) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+   summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+
+```
+
+## Overall
+
+```{r}
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_sex)
+dset1 <- (timeonART_sex)
+knitr::kable(dset1, format = "html")
+
+```
+
+```{r eval=FALSE, include=FALSE}
+table1::table1(~ Median + quantile25 + quantile75 | sex_age2_txt , data = timeonART_sex, overall=c(left="Total"), render.categorical = my.render.cat)
+```
+
+## Lesotho
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="LSO") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+## Malawi
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="MWI") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+
+## Mozambique
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="MOZ") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+## South Africa
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="ZAF") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+## Zambia
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="ZMB") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+
+## Zimbabwe
+
+```{r echo=FALSE}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex %>% filter(country =="ZWE") 
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+dset1 <- (timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Transition cohort: Switching to DTG
+
+Number of adults on ART switching to "DTG ART".
+
+## by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$sex_age2_txt,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Transition cohort: figures
+
+
+```{r include=FALSE}
+frq(FU_time, dtg_recomend_d)
+frq(FU_time, dtg_recomend_t)
+```
+
+
+## Fig 3: Cumulative incidence (1-KM plots)
+
+By country and sex by calendar year, **NOT taking into account competing risks**.
+
+
+```{r}
+#ggsurvplot
+
+FU_time_temp <- FU_time 
+
+FU_time_temp$sex_age2_txt <- factor(FU_time_temp$sex_age2_txt, levels = c("Male 20-49", "Male 50+", "Female 20-49", "Female 50+"),
+                       labels = c( "Men 20-49", "Men 50+", "Women 20-49", "Women 50+"))
+
+
+fill <- c("darkblue", "#56B4E9", "#ac0200", "#fcc8c7" )
+
+fit_t0 = survfit2(Surv(time_t2, dtg_switch) ~ sex_age2_txt , data = FU_time_temp)
+
+#put model results into a dataframe
+results <- broom::tidy(fit_t0)
+
+#fit_t0 = survfit2(Surv(time_t2, dtg_switch_txt_crr3) ~ sex , data = FU_time)
+
+
+myplot <- ggsurvplot(fit_t0, data = FU_time_temp, fun = "event", size = 1.5,
+           censor = FALSE,
+           risk.table = FALSE,
+           facet.by = "ctry",
+           # to remove the heading within the facet.wrap panels
+           short.panel.labs = TRUE, 
+           ncol = 2, 
+           surv.scale = "percent",
+           xlab = "", 
+           ylab = "Cumulative incidence (%)",
+           title = "Switching to dolutegravir", 
+           xlim = c(0, 1643), break.x.by = 365,
+           legend.title="")
+
+#myplot 
+
+plot2 <- myplot +
+  theme_ggsurvfit_default() +
+      #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c("darkblue", "#56B4E9", "#ac0200", "#fcc8c7")) +
+  theme(
+    axis.title = element_text(size = 12),
+          plot.title = element_text(size = 14, hjust = 0.5), #center title
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 12), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 12), #pad x axis label
+          axis.text.x = element_text(size = 12, angle =90, vjust = 0.6, hjust = 0.5),
+          axis.text.y = element_text(size = 10),
+          axis.text = element_text(size = 12),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 12),
+          legend.position = "right", 
+          legend.justification = "center",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"), 
+          strip.background = element_blank(),
+         strip.text.x = element_text(size = 12)
+  ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE))  +
+  geom_vline(data = FU_time, aes(xintercept = dtg_recomend_t),linetype="dashed") 
+plot2
+
+
+ggsave("output/Paper/Fig3_switch_KM_ctry_calendar.png", width = 7, height =8)
+
+```
+
+
+## Plot with at risk table
+
+```{r}
+sf <- survfit2(Surv(time_t2, dtg_switch) ~ ctry, data = FU_time_temp)
+
+p <- sf %>% 
+  ggsurvfit(type = "risk", linetype_aes = TRUE, linewidth = 1) +
+  labs(
+    x = "",
+    y = "Cumulative incidence"
+  ) +
+  add_confidence_interval() +
+  annotate("text", x = 1000, y = 0.05, label = glue::glue("{survfit2_p(sf)}")) +
+  add_risktable()
+
+  
+  # add_censor_mark() +
+  # add_confidence_interval() +
+  # add_quantile() +
+ #  add_risktable()
+ # add_pvalue()
+
+
+## edit with ggplot
+
+plot3 <- p + 
+  theme_ggsurvfit_default() +
+  # limit plot to show 8 years and less
+  coord_cartesian(xlim = c(0, 1643), clip = 'off', expand=TRUE) +
+    theme(legend.position = "bottom") +
+  # update figure labels/titles
+  labs(
+    y = "Cumulative incidence",
+    title = "1-KM switching to DTG",
+  ) +
+  # reduce padding on edges of figure and format axes
+  scale_y_continuous(label = scales::percent, 
+                     breaks = seq(0, 1, by = 0.2),
+                     expand = c(0.015, 0)) +
+       #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(0, 183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("start", "2019", "2020", "2021", "2022", "2023")) +
+  guides(colour=guide_legend(ncol=6))
+
+plot3
+
+ggsave("output/Paper/Fig3_switch_at_risk_table_ctry_calendar.png", width = 8, height =8)
+
+```
+
+```{r include=FALSE}
+with(sf, data.frame(time, n.risk, n.event, surv, cumhaz))
+
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Output of KM model 
+
+Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+
+
+```{r include=FALSE}
+
+sf2 <- survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt , data = FU_time_temp)
+
+library(broom)
+
+members <- c("time", "n.risk", "n.censor", "n.event", "strata") 
+
+#create tidy dataframe and subset by the columns saved in members
+df_sf2 <- tidy(sf2)[,members]
+head(df_sf2)
+
+df_sf2_2023 <- df_sf2 %>% filter(time >1610 & time <1645)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(df_sf2_2023)
+knitr::kable(dset1, format = "html")
+```
+
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt, data = FU_time_temp), times = 1643)
+
+## Lesotho
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="LSO")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+## Malawi
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="MWI")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+## Mozambique
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="MOZ")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+## South Africa
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="ZAF")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+## Zambia
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="ZMB")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+## Zimbabwe
+
+```{r echo=FALSE}
+#Print out "survival" at end of plot time_t2 ==1643 (end 2022)
+FU_time_temp2 <- FU_time_temp %>% filter(country =="ZWE")
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex_age2_txt  , data = FU_time_temp2), times = 1643)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

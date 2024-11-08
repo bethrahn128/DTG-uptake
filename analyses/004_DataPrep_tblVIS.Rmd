@@ -1,0 +1,779 @@
+---
+title: "SA256 DTG uptake <br> tblVIS"
+subtitle: " "
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+import::from("psych", "geometric.mean")
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(
+  cache = FALSE,
+  prompt = FALSE,
+  tidy = FALSE,
+  comment = NA,
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+
+# IeDEA-SA Data Prep
+
+Raw Stata and `fst` files come from central directory of `IeDEA_core`.  
+
+Using release `Stata_202308_Aug`.  
+
+```{r eval=FALSE, include=FALSE}
+list.files("../IeDEA_core/data/Stata_202308_Aug/", pattern = "\\.fst$") %>%
+  kable(col.names = "Datasets - new") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = F
+  )
+```
+
+## Druglist
+
+Updated `druglist` dataset from the `ART-codes` repo.   
+
+```{r include=FALSE}
+druglist = data.table(readr::read_csv("https://raw.githubusercontent.com/IeDEA-SA/ART-codes/main/data-raw/IeDEA_druglist.csv"))[, c("drug_orig") := NULL]
+
+druglist[, drug := trimws(drug, which = "both")]
+```
+
+```{r echo=FALSE}
+druglist %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+druglist = druglist[, .(art_id, drug, arv_class)]
+```
+
+## Official DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+```
+
+```{r echo=FALSE}
+dtg_recomend %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+
+rev_close_d = data.table(read_fst("data_temp/rev_close_d_v001.fst"))
+
+program_close_d = data.table(read_fst("data_temp/program_close_d_v001.fst"))
+
+tblCENTER = data.table(read_fst("data_temp/tblCENTER_v001.fst"))
+
+tblVIS = data.table(read_fst("data_temp/tblVIS_v001.fst"))
+
+tblBAS = data.table(read_fst("data_temp/tblBAS_v003.fst"))
+
+tblLTFU = data.table(read_fst("data_temp/tblLTFU_v003.fst"))
+
+tblART = data.table(read_fst("data_temp/tblART_v003.fst"))
+
+tblLAB_RNA = data.table(read_fst("data_temp/tblLAB_RNA_v003.fst"))
+
+tblLAB_CD4 = data.table(read_fst("data_temp/tblLAB_CD4_v003.fst"))
+
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# `tblVIS`
+
+Starting point is `r number(nrow(tblVIS), big.mark = ",")` ART records of `r number(length(unique(tblVIS$patient)), big.mark = ",")` patients from all combined cohorts.  
+
+
+Keep unique rows
+
+There are few surplus duplicates; keeping only unique 
+
+```{r}
+tblVIS = distinct(tblVIS)
+```
+
+
+Find program max `close_d` 
+
+Program level, maximum `close_d` was brought from revised close dates.  
+
+```{r echo=FALSE}
+tblVIS = merge(tblVIS, program_close_d, by = "program",
+                   all.x = TRUE, all.y = FALSE)
+```
+
+
+Drop implausible or missing visit dates 
+
+```{r eval=FALSE, include=FALSE}
+frq(tblVIS, is.na(vis_d))
+tblVIS = tblVIS[!is.na(vis_d), ]
+```
+
+Keeping only precise dates (don't do)
+
+```{r echo=FALSE}
+frq(tblVIS, vis_d_a)
+```
+
+```{r include=FALSE}
+# View(tblVIS[vis_d_a == "", ])
+#tblVIS = tblVIS[vis_d_a == "D", ]
+#tblVIS[, vis_d_a := NULL]
+```
+
+Remove visits before 2003
+
+```{r echo=FALSE}
+frq(tblVIS, vis_d < as.Date("2003-01-01"))
+```
+
+```{r include=FALSE}
+tblVIS = tblVIS[vis_d >= as.Date("2003-01-01"), ]
+```
+
+
+## Check that visit center names match tblCENTER
+
+Compare tblCENTER and tblVIS center names of patient's last visit
+
+```{r}
+name_tblCENTER = tblCENTER[, .(center, program, country)]
+name_tblCENTER = name_tblCENTER[, center_center := center]
+setnames(name_tblCENTER, "program", "center_program")
+setnames(name_tblCENTER, "country", "center_country")
+
+name_tblCENTER = distinct(name_tblCENTER)
+frq(name_tblCENTER, center)
+```
+
+
+```{r}
+name_tblVIS = tblVIS[, .(patient, vis_d, center, program, country)]
+name_tblVIS = distinct(name_tblVIS)
+
+setDT(name_tblVIS)
+
+setorder(name_tblVIS, patient, vis_d, center, program, country)
+
+name_tblVIS = name_tblVIS[, vis_count := .N, by = patient]
+
+
+name_tblVIS = name_tblVIS[, vis_order := 1:.N, by = patient]
+
+name_tblVIS = name_tblVIS[vis_count == vis_order,]
+
+name_tblVIS = name_tblVIS[, last_vis_d := vis_d]
+
+
+name_tblVIS = name_tblVIS[, vis_center := center]
+setnames(name_tblVIS, "program", "vis_program")
+setnames(name_tblVIS, "country", "vis_country")
+name_tblVIS = distinct(name_tblVIS)
+frq(name_tblVIS, center)
+```
+
+
+Program centers in tblCENTER not in tblVIS
+
+```{r echo=FALSE}
+name_match_CENTER = merge(name_tblCENTER, name_tblVIS, by = "center",
+                   all.x = TRUE, all.y = TRUE)
+name_match_CENTER = name_match_CENTER[is.na(vis_program), ]
+
+frq(name_match_CENTER, center_program)
+frq(name_match_CENTER, center_center)
+```
+
+
+Program centers in tblVIS not in tblCENTER
+
+```{r echo=FALSE}
+name_match_VIS = merge(name_tblVIS, name_tblCENTER, by = "center",
+                   all.x = TRUE, all.y = TRUE)
+name_match_VIS = name_match_VIS[is.na(center_program), ]
+
+frq(name_match_VIS, vis_program)
+frq(name_match_VIS, vis_center)
+
+```
+
+Correct any center names in tblVIS if they are spelled differently than in tblCENTER (none)
+
+```{r}
+#tblVIS[, center := ifelse(center =="AFRICA CENTER", "AFRICA CENTRE", center)]
+#tblVIS[, center := ifelse(center =="TLC-SA", "THEMBA LETHU CLINIC", center)]
+```
+
+## Exclude patients with last visit at centers not in tblCENTER
+
+```{r echo=FALSE}
+exclude = name_match_VIS[, drop :=1,]
+
+exclude = exclude[drop ==1,. (patient, vis_program, vis_center, drop)]
+
+exclude = unique(exclude)
+
+frq(exclude, vis_program)
+
+```
+
+
+```{r}
+exclude = exclude[,. (patient)]
+```
+
+
+Exclude patients across tables 
+
+```{r}
+
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+
+tblVIS = setDT(tblVIS)[!exclude, on = c("patient")]
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblLAB_CD4 = setDT(tblLAB_CD4)[!exclude, on = c("patient")]
+tblLAB_RNA = setDT(tblLAB_RNA)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+
+```
+
+
+```{r include=FALSE}
+rm(name_match_CENTER, name_match_VIS, name_tblCENTER, name_tblVIS); gc()
+```
+
+
+## BAS overlap
+
+Keeping only tblVIS patients that are also in tblBAS
+
+```{r}
+temp = tblBAS[, .(patient, recart_d, dtg_recomend_d)]
+
+temp = distinct(temp)
+
+tblVIS = merge(tblVIS, temp,
+               by = c("patient"),
+               all.x = FALSE, all.y = FALSE
+)
+
+```
+
+## tblVIS & tblBAS: update max_close_d for patients with last visit at dropped center
+
+Find center where patient had last visit
+
+```{r include=FALSE}
+center = tblCENTER[, .(center, add_center_d, drop_center_d)]
+```
+
+
+```{r include=FALSE}
+tblVIS = merge(tblVIS, center,
+               by = c("center"),
+               all.x = FALSE, all.y = FALSE
+)
+
+```
+
+
+```{r include=FALSE}
+setorder(tblVIS, patient, vis_d)
+tblVIS[, vis_count := .N, by = patient]
+tblVIS[, vis_order := 1:.N, by = patient]
+
+last_visit = tblVIS[vis_count == vis_order,]
+
+last_visit = last_visit[, last_vis_d := vis_d]
+
+last_visit = last_visit[, .(patient, program, country, max_close_d, recart_d, last_vis_d, center, add_center_d, drop_center_d, dtg_recomend_d, vis_count)]
+
+```
+
+```{r eval=FALSE, include=FALSE}
+test <- last_visit %>% filter(country =="ZAF")
+```
+
+
+Find patients who had last visit at center dropped before max_close_d of program
+
+```{r include=FALSE}
+
+last_visit = last_visit[!is.na(drop_center_d) & drop_center_d < max_close_d, drop := 1]
+
+last_visit = last_visit[drop == 1,]
+
+```
+
+tblBAS: update max_close_d to the drop_center_d at last visit
+
+```{r}
+tblBAS = merge(tblBAS, last_visit[, .(patient, drop_center_d)],
+               by = c("patient"),
+               all.x = TRUE, all.y = FALSE
+)
+
+setDT(tblBAS)
+
+tblBAS = tblBAS[!is.na(drop_center_d), max_close_d := drop_center_d]
+
+test <- tblBAS %>% filter(max_close_d == drop_center_d)
+
+
+```
+
+
+tblVIS: update max_close_d to the drop_center_d at last visit
+
+```{r}
+
+tblVIS = tblVIS[!is.na(drop_center_d), max_close_d := drop_center_d]
+
+```
+
+
+## Exclusion: close date (program)
+
+Programs with visits after close date (don't need to do)
+
+```{r}
+#frq(tblVIS, vis_d > max_close_d)
+frq(tblVIS[vis_d > max_close_d, ], program)
+```
+
+
+Remove visits after close date of the cohort/center (`max_close_d`) (don't need to do)
+
+```{r}
+#tblVIS = tblVIS[vis_d <= max_close_d, ]
+#tblVIS[, max_close_d := NULL]
+```
+
+
+
+## Implausible next visit dates 
+
+- next visit estimates that are the same or earlier than the visit are replaced to NAs  
+
+```{r echo=FALSE}
+frq(tblVIS, !is.na(next_visit_d) & next_visit_d <= vis_d)
+test <- tblVIS %>% filter(!is.na(next_visit_d) & next_visit_d <= vis_d)
+```
+
+```{r include=FALSE}
+tblVIS = tblVIS[!is.na(next_visit_d) & next_visit_d <= vis_d, next_visit_d_a := "U"]
+tblVIS = tblVIS[!is.na(next_visit_d) & next_visit_d <= vis_d, next_visit_d := NA]
+```
+
+- cleaning up imprecise next visit estimates  
+
+```{r echo=FALSE}
+frq(tblVIS, next_visit_d_a)
+```
+
+```{r include=FALSE}
+#tblVIS[next_visit_d_a %in% c("Y", "U", ""), next_visit_d := NA]
+tblVIS = tblVIS[, next_visit_d_a := NA]
+```
+
+## Multiple visits per day  
+
+There are few patients having 2-3 visits per day
+
+```{r echo=FALSE}
+tblVIS[, vis_daily := .N, by = c("patient", "vis_d")]
+frq(tblVIS, vis_daily)
+# View(tblVIS[vis_daily > 1, ])
+```
+
+```{r include=FALSE}
+tblVIS[, vis_daily := NULL]
+```
+
+## Count and order of visits
+
+Visit count and order were calculated on raw data
+
+```{r include=FALSE}
+setorder(tblVIS, patient, vis_d)
+tblVIS[, vis_count := .N, by = patient]
+tblVIS[, vis_order := 1:.N, by = patient]
+
+# frq(tblVIS$vis_count)
+# frq(tblVIS$vis_order)
+```
+
+## Patients without any visits
+
+```{r include=FALSE}
+# patients with any art
+include = unique(tblVIS[, .(patient)])
+
+# anti join - so patients without any art here
+no_vis = setDT(tblBAS)[!include, on = "patient"]
+
+```
+
+There are `r number(nrow(no_vis), big.mark = ",")` patients from all combined cohorts *without any visit*. 
+
+```{r echo=FALSE}
+frq(no_vis, program)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# all those patients have at least one record somewhere else though
+temp1 = unique(rbind(unique(tblART[, .(patient)]), 
+                     unique(tblLAB_CD4[, .(patient)]), 
+                     unique(tblLAB_RNA[, .(patient)])))
+
+temp2 = setDT(tblBAS)[!temp1, on = c("patient")]
+
+rm(temp1, temp2); gc()
+```
+
+## Drop patients in tblBAS without visits in tblVIS
+
+```{r}
+exclude = no_vis[,. (patient)]
+```
+
+
+Exclude patients across tables 
+
+```{r}
+
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblVIS = setDT(tblVIS)[!exclude, on = c("patient")]
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblLAB_CD4 = setDT(tblLAB_CD4)[!exclude, on = c("patient")]
+tblLAB_RNA = setDT(tblLAB_RNA)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+
+```
+
+
+```{r include=FALSE}
+rm(include, no_vis, exclude, temp, test, center); gc()
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Last Clinical Encounter
+
+## Calculate 
+
+Last visit date (*if available!*)  
+
+```{r}
+setorder(tblVIS, "patient", "vis_d")
+
+tblBAS = tblVIS[, .(patient, last_vis_d = vis_d)][tblBAS, on = "patient", mult = "last"]
+```
+
+
+Collecting all encounters from four datasets    
+
+```{r}
+tblCLIN = rbind(
+  tblART[, .(patient, enc_d = art_sd)],
+  tblLAB_CD4[, .(patient, enc_d = cd4_d)],
+  tblLAB_RNA[, .(patient, enc_d = rna_d)],
+  tblVIS[, .(patient, enc_d = vis_d)]
+)
+
+
+tblCLIN = unique(tblCLIN, by = c("patient", "enc_d"))
+
+tblCLIN = merge(tblCLIN, tblBAS[, .(patient, max_close_d)],
+               by = c("patient"),
+               all.x = TRUE, all.y = FALSE
+)
+
+tblCLIN = tblCLIN[enc_d <= max_close_d,]
+
+
+stopifnot(tblCLIN[, all(!is.na(enc_d))])
+stopifnot(tblCLIN[, all(!is.na(enc_d))])
+
+setorder(tblCLIN, "patient", "enc_d")
+```
+
+
+Getting *last clinical encounter* for each patient on the basis of all dated events from ART, CD4, RNA & VIS tables   
+
+```{r}
+tblBAS = tblCLIN[, .(patient, last_enc_d = enc_d)][tblBAS, on = "patient", mult = "last"]
+```
+
+Patient with a record in tblCLIN
+
+```{r}
+frq(tblBAS, is.na(last_enc_d))
+```
+
+
+Drop patients without a record in tblCLIN
+
+```{r}
+exclude = tblBAS[is.na(last_enc_d),. (patient)]
+```
+
+
+Exclude patients across tables 
+
+```{r}
+
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblVIS = setDT(tblVIS)[!exclude, on = c("patient")]
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblLAB_CD4 = setDT(tblLAB_CD4)[!exclude, on = c("patient")]
+tblLAB_RNA = setDT(tblLAB_RNA)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+
+```
+
+
+Last encounter has advantage of being complete...  
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(last_enc_d))
+```
+
+... when compared to last visit only:  
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(last_vis_d))
+```
+
+
+Last encounter by program:  
+
+```{r echo=FALSE}
+ggplot(
+  tblBAS,
+  aes(x = last_enc_d)
+) +
+  geom_density() +
+  facet_wrap(vars(program)) +
+  scale_x_date() +
+  theme_minimal() +
+  xlab("Last encounter day")
+```
+
+
+## Exclusion: LCE before DTG implementation date
+
+**Patients whose last clinical encounter took place before the DTG implementation date were excluded.**  
+
+```{r echo=FALSE}
+# frq(tblBAS, is.na(last_enc_d))
+# frq(tblBAS, is.na(dtg_min_program))
+
+frq(tblBAS, last_enc_d < dtg_recomend_d)
+```
+
+**Note:** *correctly there are very few DTGs here!*  
+
+```{r echo=FALSE}
+frq(tblBAS[last_enc_d < dtg_recomend_d, ], !is.na(dtg_min_pat))
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[last_enc_d >= dtg_recomend_d, ]
+
+# exclusion needs to reapplied
+tblCLIN = setDT(tblCLIN)[tblBAS[, .(patient)], on = "patient"]
+
+tblLTFU = setDT(tblLTFU)[tblBAS[, .(patient)], on = "patient"]
+
+tblART = setDT(tblART)[tblBAS[, .(patient)], on = "patient"]
+
+tblLAB_CD4 = setDT(tblLAB_CD4)[tblBAS[, .(patient)], on = "patient"]
+tblLAB_RNA = setDT(tblLAB_RNA)[tblBAS[, .(patient)], on = "patient"]
+tblVIS = setDT(tblVIS)[tblBAS[, .(patient)], on = "patient"]
+
+gc()
+```
+
+Last encounter by program after exclusion:  
+
+```{r echo=FALSE}
+ggplot(
+  tblBAS,
+  aes(x = last_enc_d)
+) +
+  geom_density() +
+  facet_wrap(vars(program), scales = "free_y") +
+  scale_x_date() +
+  theme_minimal() +
+  xlab("Last encounter day")
+```
+
+Range of values for last visit:  
+
+```{r}
+last_visit_range = tblBAS[, .(lower = min(last_vis_d, na.rm = TRUE), upper = max(last_vis_d, na.rm = TRUE)), by = "program"]
+```
+
+```{r echo=FALSE}
+last_visit_range %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+And for last encounter:  
+
+```{r}
+last_encounter_range = tblBAS[, .(lower = min(last_enc_d, na.rm = TRUE), upper = max(last_enc_d, na.rm = TRUE)), by = "program"]
+```
+
+```{r echo=FALSE}
+last_encounter_range %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+```{r include=FALSE}
+rm(last_visit_range, last_encounter_range); gc()
+```
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Saving data 
+
+## Local  
+
+This state of data is preserved in `data` directory. `fst` files for R and `dta` files for Stata are saved.    
+
+```{r}
+write_fst(tblBAS, "data_temp/tblBAS_v004.fst")
+# tblBAS = data.table(read_fst("data_temp/tblBAS_v004.fst"))
+
+write_fst(tblLTFU, "data_temp/tblLTFU_v004.fst")
+# tblLTFU = data.table(read_fst("data_temp/tblLTFU_v004.fst"))
+
+write_fst(tblART, "data_temp/tblART_v004.fst")
+# tblART = data.table(read_fst("data_temp/tblART_v004.fst"))
+
+write_fst(tblLAB_RNA, "data_temp/tblLAB_RNA_v004.fst")
+# tblLAB_RNA = data.table(read_fst("data_temp/tblLAB_RNA_v004.fst"))
+
+write_fst(tblLAB_CD4, "data_temp/tblLAB_CD4_v004.fst")
+# tblLAB_CD4 = data.table(read_fst("data_temp/tblLAB_CD4_v004.fst"))
+
+write_fst(tblVIS, "data_temp/tblVIS_v004.fst")
+# tblVIS = data.table(read_fst("data_temp/tblVIS_v004.fst"))
+
+write_fst(tblCLIN, "data_temp/tblCLIN_v004.fst")
+# tblCLIN = data.table(read_fst("data_temp/tblCLIN_v004.fst"))
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Content & missings
+
+## `tblBAS`
+
+```{r echo=FALSE}
+skimr::skim(tblBAS[,.SD, .SDcols = !c("age_cat1", "age_cat2")])
+```
+
+```{r echo=FALSE, message=FALSE}
+visdat::vis_miss(tblBAS[,.SD, .SDcols = !c("patient", "program", "age_cat1", "age_cat2")],
+                 warn_large_data = FALSE)
+```
+
+## `tblVIS`
+
+```{r echo=FALSE}
+skimr::skim(tblVIS)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report::report(sessionInfo())
+```
+
+<!-- ----------------------------------------------------- -->
+

@@ -1,0 +1,2871 @@
+---
+title: "SA256 DTG uptake <br> Initiating cohort"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer, survMisc)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MOZ" ,"MWI", "ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho", "Mozambique", "Malawi", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Data wrangling
+
+All adults who newly started ART after the national DTG adoption date.
+
+
+```{r include=FALSE}
+tblBAS_orig = data.table(read_fst("data_temp/tblBAS_v005_LTFU_WHO.fst"))
+
+# intiation cohort is those who started ART on or after DTG adoption date
+tblBAS = tblBAS_orig[cohort ==1,]
+frq(tblBAS, cohort)
+
+# remove AfA
+tblBAS = tblBAS[program != "AfA",]
+
+tblBAS = tblBAS[, dtg_first := 0]
+tblBAS = tblBAS[dtg_final ==1, dtg_first := 1]
+frq(tblBAS, dtg_first)
+
+tblBAS = tblBAS[, dtg_first_txt := factor(dtg_first, 
+      levels = c(0, 1),
+      labels = c("Other ART", "DTG ART")
+)]
+
+frq(tblBAS, dtg_first_txt)
+
+
+tblBAS = tblBAS[, age_cat3 := cut(age, 
+                                  breaks = c(seq(20, 50, 10), 100),
+                                  include.lowest = TRUE,
+                                  right = FALSE)]
+
+tblBAS = tblBAS[, rev_naive_y := factor(rev_naive_y, 
+                              levels = c(0, 1),
+                              label = c("Not naive", "Naive"))]
+
+frq(tblBAS, rev_naive_y)
+
+setDT(tblBAS)[, recart_ym := format(as.Date(recart_d), "%Y-%m")] 
+
+tblBAS = tblBAS[, end_date := as.Date("2022-12-31")] 
+
+
+
+tblBAS[, start_fu := recart_d] 
+tblBAS[, end_fu := rev_outcome_d] 
+
+tblBAS[, FU_day := as.numeric(end_fu - start_fu)]
+tblBAS[, FU_month := round(as.numeric(end_fu - start_fu) / (365.25 / 12), 1)]
+tblBAS[, FU_year := round(as.numeric(end_fu - start_fu) / (365.25), 1)]
+
+tblBAS[, time := FU_day]
+
+```
+
+
+```{r include=FALSE}
+
+tblBAS <- tblBAS %>%
+  select(-birth_d, -aids_d, -aids_d_a, 
+         -hiv_pos_d, -hiv_pos_d_a, 
+         -drop_y, -drop_d, -drop_d_a, -drop_rs,
+         -death_y, -death_d, -death_d_a,
+         -l_alive_d, -l_alive_d_a, -dtg_switch, -dtg_outcome, -dtg_min_program) 
+
+```
+
+```{r include=FALSE}
+
+tblBAS <- tblBAS %>% 
+  mutate(sex_age1 = interaction(sex, age_cat1)) %>%
+  mutate(sex_age2 = interaction(sex, age_cat2)) %>%
+  mutate(sex_age3 = interaction(sex, age_cat3)) %>%
+  as_tibble()
+
+
+tblBAS$sex_age2 <- factor(tblBAS$sex_age2, levels = c('Female.[20,50)',  'Female.[50,100]', 'Male.[20,50)', 'Male.[50,100]'),
+                                          labels = c('Female [20,50)', 'Female [50,100]', 'Male [20,50)', 'Male [50,100]'))
+frq(tblBAS, sex_age2)
+
+tblBAS$sex_age2b <- factor(tblBAS$sex_age2, levels = c('Female [20,50)', 'Male [20,50)', 'Female [50,100]', 'Male [50,100]'),
+                                          labels = c('Female [20,50)', 'Male [20,50)',  'Female [50,100]', 'Male [50,100]'))
+frq(tblBAS, sex_age2b)
+
+tblBAS$ctry <- factor(tblBAS$country, levels = c( "LSO","MOZ" ,"MWI", "ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho", "Mozambique", "Malawi", "South Africa", "Zambia", "Zimbabwe"))
+
+```
+
+```{r include=FALSE}
+
+tblART = data.table(read_fst("data_temp/tblART_v005_LTFU_WHO.fst"))
+
+tblART <- tblART %>%
+  select(-recart_d) %>%
+  as_tibble() %>% 
+  mutate(program_fac = factor(program)) %>%
+  left_join(tblBAS %>% select(patient, recart_d, dtg_first, dtg_first_txt, rev_outcome, rev_outcome_d ), by ="patient") %>%
+  filter(!is.na(recart_d))
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+testLSO <- tblART %>% filter(country == "LSO" & dtg ==1) %>% arrange(art_sd)
+```
+
+
+```{r}
+
+tblART = data.table(tblART)
+dtg_index_by_program = tblART[dtg == 1, c("program", "art_sd")]
+dtg_index_by_program = dtg_index_by_program[, .SD[which.min(art_sd)], by = "program"][order(program)]
+
+setnames(dtg_index_by_program, "art_sd", "dtg_min_program")
+
+
+```
+
+
+
+```{r echo=FALSE}
+table1::label(tblBAS$sex) <- "Sex"
+table1::label(tblBAS$age_cat3) <- "Age group"
+table1::label(tblBAS$dtg_first_txt) <- "ART at initiation"
+
+table1::label(tblBAS$sex_age2) <- "Sex & age group"
+table1::label(tblBAS$sex_age3) <- "Sex & age group"
+table1::label(tblBAS$program) <- "Program"
+table1::label(tblBAS$ctry) <- "Country"
+
+
+```
+
+
+```{r}
+tblBAS = merge(tblBAS, dtg_index_by_program, by = "program")
+```
+
+
+## Data inclusion criteria
+
+### 1. other previously applied inclusion/exclusion criteria
+
+A) No patients with DTG records:  
+  none  
+  
+B) Less than 6 months of data between DTG adoption date and database close date:  
+ none
+  
+C) Pediatric cohort  
+  -Redcross   
+  
+D) Less than 100 patients in total data set:  
+  -Rahimamoosa    
+  
+E) Excluded AfA (as private and not representative of South Africa or IeDEA-SA)
+
+
+ 
+
+Programs:
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(country, program, dtg_recomend_d, dtg_min_program, max_close_d) %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+```{r}
+#1) **Ensure all patients have >=15 months of potential follow-up since national DTG adoption date**
+
+#If looking at LTFU and VL outcomes, best if patients have at least 15 months of potential follow-up
+
+#LTFU algorithm: >90 days late to next scheduled appointment (which could be at one year interval)
+#Viral load: recommended at 4 or 6 months and then yearly after, but maybe look at viral load by 12 months #(with an upper range of + 3 months == within first 15 months)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+
+tblBAS = data.table(tblBAS)
+
+# for LTFU outcome, ensure all patients have at least 365 + 91 = 456 days of time (15m) between recart_d and max_close_d
+tblBAS[, FU_time_days := as.numeric(max_close_d - recart_d)]
+tblBAS[, FU_time_months := round(as.numeric(max_close_d - recart_d) / (365.25 / 12), 1)]
+
+
+tblBAS[, FU_time_15m := 0]
+tblBAS[FU_time_days >= 456, FU_time_15m := 1]
+tblBAS = tblBAS[ , tempname := paste0(program, max_close_d, sep = "")] 
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+#Proportion with >= 15 months of potential follow-up == 1
+frq(tblBAS,FU_time_15m)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+#Only keep patients with >= 15 months of potential follow-up
+tblBAS = tblBAS[FU_time_15m ==1, ]
+
+frq(tblBAS,program)
+
+```
+
+### 2. Ensure all programs have patients starting ART >=24m after national DTG adoption date
+
+```{r}
+
+tblBAS = data.table(tblBAS)
+
+# patients starting ART at least 365 + 91 = 456 days after national DTG adoption
+tblBAS[, FU_adoption_days := as.numeric(recart_d - dtg_recomend_d)]
+tblBAS[, FU_adoption_months := round(as.numeric(recart_d - dtg_recomend_d) / (365.25 / 12), 1)]
+tblBAS = tblBAS[ , tempname := paste0(program, max_close_d, sep = "")] 
+tblBAS[, FU_adoption_24m := 0]
+tblBAS[FU_adoption_days >= 730, FU_adoption_24m := 1]
+
+```
+
+
+Programs/centers with patients starting ART >= 24 months after national DTG adoption == 1
+
+
+```{r}
+maxclose <- tblBAS %>% select(country, program, tempname, max_close_d, dtg_recomend_d, FU_adoption_24m) %>%
+  arrange(country, program, max_close_d, tempname, dtg_recomend_d) %>%
+  group_by(country, program,  tempname, max_close_d, dtg_recomend_d, FU_adoption_24m) %>%
+  distinct() %>%
+  filter(FU_adoption_24m ==1)
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+Programs/centers to exclude
+
+```{r}
+maxclose2 <- maxclose %>% select(country, program, tempname, max_close_d, dtg_recomend_d, FU_adoption_24m) %>%
+  mutate(keep =1) 
+
+listprograms <- tblBAS %>% select(country, program, max_close_d, dtg_recomend_d,tempname) %>%
+  distinct() 
+
+
+exclude = listprograms[!(listprograms$tempname %in% maxclose2$tempname), ]
+
+exclude %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+
+```
+
+
+```{r include=FALSE}
+
+exclude %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+```{r}
+
+write_fst(exclude, "data_temp/tblBAS_cohort1_progexclude_ART24m_v010.fst")
+```
+
+
+Only keep programs with patients starting ART >= 24 months after national adoption date
+
+```{r}
+tblBAS = tblBAS[, tempname := paste(program, max_close_d, sep = "")]
+
+tblBAS = tblBAS[tempname %in% maxclose2$tempname, ]
+
+frq(tblBAS,program)
+
+
+
+```
+
+
+
+### 3. Ensure all programs have >= 100 patients
+
+Programs with <100 patients
+
+```{r}
+exclude <- tblBAS %>% select(country, program, dtg_recomend_d, dtg_min_program, max_close_d, tempname) %>%
+  arrange(dtg_recomend_d, country, program, tempname) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d, tempname) %>%
+  mutate(Npatients = n()) %>%
+  distinct() %>%
+  filter(Npatients < 100)
+  
+exclude %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+Only keep programs with >100 patients 
+
+```{r}
+
+tblBAS = tblBAS[!(tblBAS$tempname %in% exclude$tempname), ]
+
+frq(tblBAS,program)
+
+rm(exclude, maxclose, maxclose2)
+
+```
+
+
+```{r}
+tblBAS <- tblBAS %>% group_by(tempname) %>% mutate(Npatients = n()) %>% ungroup %>% filter(Npatients >=100)
+```
+
+### 4. Keep only public programs
+
+ (exclude AfA and Newlands)
+ 
+```{r echo=TRUE}
+privateprograms <- data.frame(program = c("NEWLANDS", "AfA"))
+
+tblBAS = tblBAS[!(tblBAS$program %in% privateprograms$program), ]
+```
+ 
+
+```{r}
+write_fst(tblBAS, "data_temp/tblBAS_cohort1_LTFU_WHO_v010.fst")
+```
+
+
+## Final list of programs included in initition cohort
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(country, program, dtg_recomend_d, dtg_min_program, max_close_d) %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r}
+Initiation_listprograms <- tblBAS %>% select(country, program, max_close_d, tempname) %>%
+  group_by(country, program, tempname) %>%
+  mutate(Npatients = n()) %>%
+ unique()
+
+write_fst(Initiation_listprograms, "data_temp/tblBAS_cohort1_LTFU_WHO_v010_listprograms.fst")
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Baseline characteristics
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS$ctry,
+                 tblBAS$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS$ctry,
+                 tblBAS$sex_age2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+sjPlot::tab_xtab(tblBAS$dtg_first_txt,
+                 tblBAS$ctry,
+                 show.col.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+table1::table1(~  sex + age_cat3 + dtg_first_txt + FU_day | ctry , data = tblBAS)
+
+```
+
+
+## Overview by program
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$sex_age2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation
+
+Number of adults newly initiating "Other ART" vs "DTG ART".
+
+## by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS$ctry,
+                 tblBAS$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS$sex_age3,
+                 tblBAS$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation: stacked bar chart
+
+Proportion of adults newly initiating "Other ART" vs "DTG ART".
+
+## by country
+
+
+```{r include=FALSE}
+tblBAS_tmp <- tblBAS %>% select(patient, country, ctry, program, dtg_first, dtg_first_txt, sex, age_cat1, age_cat2,)
+
+frq(tblBAS_tmp, program)
+frq(tblBAS_tmp, ctry)
+frq(tblBAS_tmp, dtg_first_txt)
+
+# dtg_status
+# none == 0, first == 1, switch == 2
+df4 <- tblBAS_tmp %>%
+  select(country, dtg_first, dtg_first_txt) %>%
+  mutate(status1 = ifelse(dtg_first ==1, 1, 0)) %>%
+  mutate(status2 = ifelse(dtg_first ==0, 1, 0))
+
+
+# dtg first
+cat1 <- df4 %>%
+  group_by(country) %>%
+  summarise(
+    numer = sum(status1, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "a") %>%
+  select(-c(per))
+
+# dtg other
+cat2 <- df4 %>%
+  group_by(country) %>%
+  summarise(
+    numer = sum(status2, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "b") %>%
+  select(-c(per))
+
+
+## Append files
+data <- rbind(cat1, cat2)
+
+
+#### overall
+
+# no dtg
+cat1a <- df4 %>%
+    mutate(country = "z_All") %>%
+    group_by(country) %>%
+    summarise(
+    numer = sum(status1, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "a") %>%
+  select(-c(per))
+
+# dtg first
+cat2a <- df4 %>%
+      mutate(country = "z_All") %>%
+    group_by(country) %>%
+    summarise(
+    numer = sum(status2, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "b") %>%
+  select(-c(per))
+
+
+
+## Append files
+dataa <- rbind(cat1a, cat2a)
+
+data <- rbind(data, dataa)
+
+data <- data %>%
+  mutate(text2 = round(percentage, 0))
+
+
+## Plot percentage of HIV clinics that provide the following HIV-related services
+
+data$country <- factor(data$country, levels = c( "LSO","MOZ","MWI","ZAF","ZMB","ZWE", "z_All"),
+                      labels = c("Lesotho", "Mozambique", "Malawi","South Africa", "Zambia ", "Zimbabwe" , "Total"))
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART", "Other ART"))
+
+
+
+# The palette with grey:
+#cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+fill <- c("#56B4E9", "#D55E00")
+
+#fill <- c("#3F6D9B", "#a94c4c")
+
+#fill <- c("#3F6D9B", "#D55E00")
+
+```
+
+
+```{r echo=FALSE}
+# with Afa and text showing percentage
+ggplot(data, aes(x=country, y=percentage, fill=outcome, label = text2)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1),
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=10),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10),
+        legend.text = element_text(size=10)) +
+  labs(x="", y="Percentage (%)", fill ="") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  geom_text(size = 4.5, colour = "white", fontface = "bold", position = position_stack(reverse = TRUE, vjust = 0.8))
+
+# Print plot to a png file
+#ggsave("output/figures/SA256_DTG_status_country_cohort1_v2.png", width = 8, height =4)
+
+```
+
+```{r include=FALSE}
+rm("df4", "tblBAS_tmp", "cat1", "cat2", "cat1a", "cat2a", "dataa")
+```
+
+
+## by program
+
+
+```{r include=FALSE}
+tblBAS_tmp <- tblBAS %>% select(patient, country, ctry, program, dtg_first, dtg_first_txt, sex, age_cat1, age_cat2)
+
+frq(tblBAS_tmp, program)
+frq(tblBAS_tmp, ctry)
+frq(tblBAS_tmp, dtg_first_txt)
+
+# dtg_status
+# none == 0, first == 1, switch == 2
+df4 <- tblBAS_tmp %>%
+  select(program, dtg_first, dtg_first_txt) %>%
+  mutate(status1 = ifelse(dtg_first ==1, 1, 0)) %>%
+  mutate(status2 = ifelse(dtg_first ==0, 1, 0))
+
+
+# dtg first
+cat1 <- df4 %>%
+  group_by(program) %>%
+  summarise(
+    numer = sum(status1, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "a") %>%
+  select(-c(per))
+
+# dtg other
+cat2 <- df4 %>%
+  group_by(program) %>%
+  summarise(
+    numer = sum(status2, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "b") %>%
+  select(-c(per))
+
+
+#### overall
+
+# no dtg
+cat1a <- df4 %>%
+    mutate(program = "Total") %>%
+    group_by(program) %>%
+    summarise(
+    numer = sum(status1, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "a") %>%
+  select(-c(per))
+
+# dtg first
+cat2a <- df4 %>%
+      mutate(program = "Total") %>%
+    group_by(program) %>%
+    summarise(
+    numer = sum(status2, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "b") %>%
+  select(-c(per))
+
+
+
+## Append files
+
+data <- rbind(cat1, cat2)
+
+dataa <- rbind(cat1a, cat2a)
+
+data <- rbind(data, dataa)
+
+data <- data %>%
+  mutate(text2 = round(percentage, 0))
+
+
+## Plot percentage of HIV clinics that provide the following HIV-related services
+
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART", "Other ART"))
+
+frq(data, program)
+data$program <- factor(data$program, levels = 
+                         c( "AfA","GUGULETHU","HLABISA","KHAYELITSHA", "KHETHIMPILO","THEMBALETHU","SMARTLES", "SMARTMOZ", "SMARTZIM", "CIDRZ", "Total" ),
+                      labels = 
+                        c( "AfA","GUGULETHU","HLABISA","KHAYELITSHA","KHETHIMPILO","THEMBALETHU","SMARTLES", "SMARTMOZ", "SMARTZIM", "CIDRZ", "Total" ))
+
+# The palette with grey:
+#cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+#fill <- c("royalblue4", "deepskyblue3","lightskyblue1")
+
+
+fill <- c("#56B4E9", "#D55E00")
+```
+
+
+```{r echo=FALSE}
+# with Afa and text showing percentage
+ggplot(data, aes(x=program, y=percentage, fill=outcome, label = text2)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1),
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=10),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10, angle =90, hjust =0.5, vjust =0.5,),
+        legend.text = element_text(size=10)) +
+  labs(x="", y="Percentage (%)", fill ="") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  geom_text(size = 4.5, colour = "white", fontface = "bold", position = position_stack(reverse = TRUE, vjust = 0.8))
+
+# Print plot to a png file
+#ggsave("output/figures/SA256_DTG_status_country_cohort1_v2.png", width = 8, height =4)
+
+```
+
+```{r include=FALSE}
+rm("df4", "tblBAS_tmp", "cat1", "cat2", "cat1a", "cat2a", "dataa")
+```
+
+
+## by sex & age
+
+```{r include=FALSE}
+
+tblBAS_tmp <- tblBAS %>% select(patient, country, ctry, program, dtg_first, dtg_first_txt,  sex, sex_age3, sex_age2, age_cat1, age_cat2, age_cat3) 
+
+frq(tblBAS_tmp, program)
+frq(tblBAS_tmp, ctry)
+frq(tblBAS_tmp, dtg_first_txt)
+
+# dtg_status
+# none == 0, first == 1, switch == 2
+df4 <- tblBAS_tmp %>%
+  select(program, ctry, sex, dtg_first, dtg_first_txt, age_cat3) %>%
+  mutate(status1 = ifelse(dtg_first ==1, 1, 0)) %>%
+  mutate(status2 = ifelse(dtg_first ==0, 1, 0))
+
+
+# dtg first
+cat1 <- df4 %>%
+  group_by(sex, age_cat3) %>%
+  summarise(
+    numer = sum(status1, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "a") %>%
+  select(-c(per))
+
+# dtg other
+cat2 <- df4 %>%
+  group_by(sex, age_cat3) %>%
+  summarise(
+    numer = sum(status2, na.rm =TRUE),
+    denom = n()) %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(percentage = round(per, 1)) %>%
+  mutate(outcome = "b") %>%
+  select(-c(per))
+
+
+## Append files
+data <- rbind(cat1, cat2)
+
+data <- data %>%
+  mutate(text2 = round(percentage, 0))
+
+
+## Plot percentage of HIV clinics that provide the following HIV-related services
+
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART", "Other ART"))
+
+```
+
+
+```{r include=FALSE}
+
+# The palette with grey:
+#cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+#fill <- c("royalblue4", "deepskyblue3","lightskyblue1")
+fill <- c("#56B4E9", "#D55E00")
+
+data_f <- data %>% filter(sex == "Female")
+
+f <- ggplot(data_f, aes(x=age_cat3, y=percentage, fill=outcome, label = text2)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity", width=0.7) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1),
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=10),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10, angle =0, hjust =0.5, vjust =0.5,),
+        legend.text = element_text(size=10)) +
+  labs(x="", y="Percentage (%)", fill ="") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  geom_text(size = 4.5, colour = "white", fontface = "bold", position = position_stack(reverse = TRUE, vjust = 0.8)) +
+  labs(title='Female') 
+
+f
+
+data_m <- data %>% filter(sex == "Male")
+m <- ggplot(data_m, aes(x=age_cat3, y=percentage, fill=outcome, label = text2)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity", width=0.7) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 30), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1),
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=10),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10, angle =0, hjust =0.5, vjust =0.5,),
+        legend.text = element_text(size=10)) +
+  labs(x="", y="Percentage (%)", fill ="") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  geom_text(size = 4.5, colour = "white", fontface = "bold", position = position_stack(reverse = TRUE, vjust = 0.8)) +
+  labs(title='Male') 
+
+m
+
+```
+
+
+```{r echo=FALSE}
+ggarrange(f, m, ncol =1, nrow =2, common.legend = TRUE, legend = "bottom") 
+```
+
+
+```{r include=FALSE}
+rm("df4", "tblBAS_tmp", "cat1", "cat2", "data_f", "data_m")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation over time: histograms by sex
+
+Number of adults newly initiating "Other ART" vs "DTG ART". Binwidth = 30.
+
+These are **patient records**, *aggregated by their ART start date*.
+
+Black vertical lines are national DTG adoption dates.
+
+## by country
+
+
+```{r include=FALSE}
+# histogram
+f <- tblBAS %>%
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth =30, position = "identity") +
+  theme_bw() + 
+  facet_wrap(vars(ctry), scales = "free_y", ncol=2) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "bottom", strip.background = element_blank()) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Women') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+f
+
+```
+
+
+```{r include=FALSE}
+# histogram
+m <- tblBAS %>%
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth =30, position = "identity") +
+  theme_bw() + 
+  facet_wrap(vars(ctry), scales = "free_y", ncol=2) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "bottom", strip.background = element_blank()) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Men') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+
+m
+
+```
+
+
+```{r}
+ggarrange(f, m, ncol =2, nrow =1, common.legend = TRUE, legend = "bottom") 
+
+ggsave("output/Cohort_initiation/DTG_initiation_by_country_sex.png", width = 7, height =5)
+```
+
+
+## by programs
+
+```{r echo=FALSE}
+# histogram
+tblBAS %>%
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(program), scales = "free_y", ncol=5) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("ART start date") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "bottom" ) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Women') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+
+```
+
+
+```{r echo=FALSE}
+# histogram
+tblBAS %>%
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(program), scales = "free_y", ncol=5) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.position = "bottom" ) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Men') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+
+```
+
+
+## by age
+
+Black vertical lines are national DTG adoption dates.
+
+```{r echo=FALSE}
+# histogram
+f <- tblBAS %>%
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_bw() + 
+  facet_wrap(vars(age_cat2), scales = "free_y") +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("ART start date") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), strip.background = element_blank()) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Women') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+f
+
+```
+
+
+```{r echo=FALSE}
+# histogram
+m <- tblBAS %>%
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_bw() + 
+  facet_wrap(vars(age_cat2), scales = "free_y") +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), strip.background = element_blank()) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title='Men') +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+m
+
+```
+
+
+
+```{r}
+ggarrange(f, m, ncol =1, nrow =2, common.legend = TRUE, legend = "bottom") 
+
+ggsave("output/Cohort_initiation/DTG_initiation_by_sex_age.png", width = 7, height =6)
+```
+
+
+## by country, sex, age
+
+
+```{r echo=FALSE}
+# histogram
+
+LSO <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(country == "LSO") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(sex_age2), scales = "free_y") +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Lesotho") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+LSO
+
+
+
+
+MOZ <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(country == "MOZ") %>% 
+    ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(sex_age2), scales = "free_y" ) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Mozambique") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+MOZ
+
+
+ZAF <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(country == "ZAF") %>% 
+    ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(sex_age2), scales = "free_y" ) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="South Africa") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+ZAF
+
+
+ZMB <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(country == "ZMB") %>% 
+    ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(sex_age2), scales = "free_y" ) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Zambia") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+ZMB
+
+
+ZWE <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(country == "ZWE") %>% 
+    ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(sex_age2), scales = "free_y" ) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Zimbabwe") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE))
+ZWE
+
+
+# levels=c('Female [20,50)', 'Male c20,50)', 'Female [50,100]', 'Male [50,100]')
+
+```
+
+```{r eval=FALSE, include=FALSE}
+ggarrange(LSO, MOZ, ZAF, ZMB, ZWE, ncol =1, nrow =5, common.legend = TRUE, legend = "bottom") 
+```
+
+## by sex, age and country
+
+```{r include=FALSE}
+# histogram
+
+F20 <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(sex_age2 == "Female [20,50)") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(ctry), scales = "free_y" , nrow =1) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Female [20,50)") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+F20
+
+
+
+M20 <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(sex_age2 == "Male [20,50)") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(ctry), scales = "free_y" , nrow =1) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Male [20,50)") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+M20
+
+
+F50 <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(sex_age2 == "Female [50,100]") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(ctry), scales = "free_y" , nrow =1) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Female [50,100]") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+F50
+
+M50 <- tblBAS %>% select(patient, country, ctry, dtg_recomend_d, recart_d, dtg_first, dtg_first_txt, sex, sex_age2, age_cat2) %>%
+  filter(sex_age2 == "Male [50,100]") %>% 
+  ggplot(aes(x = recart_d, fill = dtg_first_txt)) +
+  geom_histogram(alpha = 0.8, binwidth = 30, position = "identity") +
+  theme_minimal() + 
+  facet_wrap(vars(ctry), scales = "free_y" , nrow =1) +
+  geom_vline(aes(xintercept = dtg_recomend_d)) +
+  xlab("FU end (year)") + ylab("Number") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  labs(fill='Type of ART', x='ART start date', y='Number', title="Male [50,100]") +
+   scale_fill_manual("Type of ART", values = c("#D55E00",  "#56B4E9"),
+            guide = guide_legend(reverse = FALSE)) 
+
+M50
+
+
+
+# levels=c('Female [20,50)', 'Male c20,50)', 'Female [50,100]', 'Male [50,100]')
+
+```
+
+```{r}
+ggarrange(F20, M20, ncol =1, nrow =2, common.legend = TRUE, legend = "bottom") 
+```
+
+
+```{r}
+ggarrange(F50, M50, ncol =1, nrow =2, common.legend = TRUE, legend = "bottom") 
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation over time: density plots by sex
+
+Density plots for patients initiating DTG ART vs other ART over time.
+
+These are **patient records**, *aggregated by their ART start date*.
+
+## by country  
+
+
+```{r echo=FALSE}
+tblBAS %>% 
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density(alpha = 0.1) +
+  facet_wrap(vars(ctry), scales = "free_y") +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Women") +
+  labs(color='Type of ART') +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+```
+
+
+```{r echo=FALSE}
+tblBAS %>% 
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density() +
+  facet_wrap(vars(ctry), scales = "free_y") +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Men") +
+  labs(color='Type of ART') +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+```
+
+
+## by program  
+
+
+```{r echo=FALSE}
+tblBAS %>% 
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Women") + 
+  labs(color='Type of ART') +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+```
+
+
+```{r echo=FALSE}
+tblBAS %>% 
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density() +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Men") +
+  labs(color='Type of ART') +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+```
+
+
+## by age  
+
+
+```{r include=FALSE}
+w <- tblBAS %>% 
+  filter(sex == "Female") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density() +
+  facet_wrap(vars(age_cat3), scales = "free_y", nrow = 1) +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Women") +
+  labs(color='Type of ART')  +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+w
+```
+
+
+```{r include=FALSE}
+m <- tblBAS %>% 
+  filter(sex == "Male") %>% 
+  ggplot(aes(x = recart_d, color = dtg_first_txt)) +
+  geom_density() +
+  facet_wrap(vars(age_cat3), scales = "free_y", nrow = 1) +
+  theme_minimal() + 
+  xlab("ART start date") + ylab("Density") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+  ggtitle("Men") +
+  labs(color='Type of ART') +
+  scale_color_manual(values =c("#D55E00",  "#56B4E9"))
+
+m
+```
+
+
+```{r echo=FALSE}
+ggarrange(w, m, ncol =1, nrow =2, common.legend = TRUE, legend = "bottom") 
+```
+
+
+```{r include=FALSE}
+rm("w", "m")
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation over time: stacked bar chart
+
+Percentage of adults initiating DTG ART among all adults initiating ART in that month since national DTG adoption. End plot date at end 2022.
+
+These are **patient records**, *aggregated ART start date by month*.
+
+
+## by country
+
+```{r echo=FALSE}
+
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, recart_date, dtg_recomend_d) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, recart_date, dtg_recomend_d) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART","Other ART"))
+
+fill <- c( "#56B4E9", "#D55E00")
+
+ 
+## stacked bar chart with legend on side 
+
+
+ggplot(data, aes(x=recart_date, y=value, fill=outcome)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=9),
+        axis.title.x = element_text(size=9),
+        axis.text.y = element_text(size=9),
+        axis.text.x = element_text(size=9),
+        legend.text = element_text(size=9)) +
+  theme_classic() + 
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  facet_wrap(vars(ctry), nrow=5) +
+  ggtitle("Percentage initiating DTG ART over time by country") +
+  scale_fill_manual("Type of ART", values = c( "#56B4E9", "#D55E00"),
+            guide = guide_legend(reverse = TRUE)) 
+
+ggsave("output/Cohort_initiation/DTG_vs_other_country.png", width = 7, height =6) 
+
+```
+
+
+## by sex & age
+
+```{r echo=FALSE}
+
+frq(tblBAS, sex_age2b)
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+
+fill <- c( "#56B4E9", "#D55E00")
+
+frq(data, sex_age2)
+
+ 
+## stacked bar chart with legend on side 
+ 
+ggplot(data, aes(x=recart_date, y=value, fill=outcome)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        axis.title.y = element_text(size=9),
+        axis.title.x = element_text(size=9),
+        axis.text.y = element_text(size=9),
+        axis.text.x = element_text(size=9),
+        legend.text = element_text(size=9)) +
+   theme_classic() + 
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  facet_wrap(vars(sex_age2b), nrow = 4) +
+  ggtitle("Percentage initiating DTG ART over time by sex and age") +
+  scale_fill_manual("Type of ART", values = c( "#56B4E9", "#D55E00"),
+            guide = guide_legend(reverse = TRUE)) 
+
+ggsave("output/Cohort_initiation/DTG_vs_other_sex_age.png", width = 7, height =5)
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month")) 
+
+
+dtg1 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, recart_date, dtg_recomend_d) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, recart_date, dtg_recomend_d) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data2 <- data %>% filter(ctry =="Malawi")
+
+
+######################
+per <- ggplot(data2, aes(x=recart_date, y=numer/denom*100, fill=outcome))  +
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_y_continuous(breaks = seq(0, 100, 25)) +
+  labs(x = "date", y = "percent")
+
+per
+
+den <- ggplot(data2, aes(x = recart_date, y = denom)) +
+  geom_line() +
+    scale_y_continuous(n.breaks = 6) +
+  labs(x = "date", y = "number")
+
+den
+#######################
+
+scale = 1
+
+ggplot(data2, aes(x=recart_date, y=numer/denom*100, fill=outcome))  +
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+    scale_y_continuous(n.breaks = 6) +
+  labs(x = "date", y = "percent") +
+  geom_line(aes(y = denom, color = "text")) +
+  scale_color_manual(values = c("black", "gray50")) +
+ scale_y_continuous(sec.axis = sec_axis(~.*scale, name="Biomarker (IU/mL)"))
+ 
+
+```
+
+
+## by country "Female [20,50)"
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, sex_age2b)
+```
+
+
+```{r echo=FALSE}
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(sex_age2 =="Female [20,50)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>% filter(sex_age2 =="Female [20,50)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+
+fill <- c( "#56B4E9", "#D55E00")
+
+frq(data, sex_age2)
+
+ 
+## stacked bar chart with legend on side 
+
+datab <- data %>% filter(country == "LSO")
+ 
+
+ggplot(data, aes(x=recart_date, y=value, fill=outcome)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=9),
+        axis.title.x = element_text(size=9),
+        axis.text.y = element_text(size=9),
+        axis.text.x = element_text(size=9),
+        legend.text = element_text(size=9)) +
+  theme_minimal() + 
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 6) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  facet_wrap(vars(ctry), nrow=5) +
+  ggtitle("Percentage Female [20,50) initiating DTG ART over time by country") 
+
+```
+
+
+
+## by country "Male [20,50)"
+
+```{r echo=FALSE}
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(sex_age2 =="Male [20,50)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>% filter(sex_age2 =="Male [20,50)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex_age2, sex, age_cat2, sex_age2b, recart_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+
+fill <- c( "#56B4E9", "#D55E00")
+
+frq(data, sex_age2)
+
+ 
+## stacked bar chart with legend on side 
+
+datab <- data %>% filter(country == "LSO")
+ 
+
+ggplot(data, aes(x=recart_date, y=value, fill=outcome)) + 
+  geom_bar(position = position_stack(reverse = TRUE), stat="identity") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  theme(legend.position="bottom", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="horizontal", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        legend.title = element_blank(),
+        axis.title.y = element_text(size=9),
+        axis.title.x = element_text(size=9),
+        axis.text.y = element_text(size=9),
+        axis.text.x = element_text(size=9),
+        legend.text = element_text(size=9)) +
+  theme_minimal() + 
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 6) +
+  guides(fill = guide_legend(reverse=TRUE)) +
+  facet_wrap(vars(ctry), nrow=5) +
+  ggtitle("Percentage Male [20,50) initiating DTG ART over time by country" ) 
+
+```
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Proportion DTG ART initiation by sex over time
+
+## by country aggregated by month
+
+
+```{r}
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+#frq(tblBAS, age_cat2)
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(age_cat2 =="[20,50)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex, recart_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>% filter(age_cat2 =="[20,50)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(country, ctry, sex, recart_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+
+fill <- c( "darkblue", "#56B4E9")
+
+ 
+## stacked bar chart with legend on side 
+
+data <- data %>% filter(outcome =="DTG ART")
+ 
+
+ggplot(data, aes(x=recart_date, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 2, linetype = 1) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_classic() + 
+  theme(legend.position="right", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        #legend.title = element_blank(),
+        axis.title.y = element_text(size=11),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10),
+        legend.text = element_text(size=10)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x="", y="Percentage initiating DTG ART (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(color = guide_legend(title = "Initiating DTG ART", reverse=FALSE)) +
+  facet_wrap(vars(ctry), nrow=5) +
+  ggtitle("Proportion newly initiating DTG ART among males & females 20-50 years \n aggregated by month") 
+
+ggsave("output/Cohort_initiation/DTG_by_ctry_sex_by_month.png", width = 7, height =8)  
+
+```
+
+
+## by age group aggregated by month 
+
+
+```{r}
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month"))
+
+#frq(tblBAS, age_cat2)
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% 
+  filter(recart_d <= end_date) %>%
+  group_by(sex, recart_date, age_cat3) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>% 
+    filter(recart_d <= end_date) %>%
+  group_by(sex, recart_date, age_cat3) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+
+fill <- c( "darkblue", "#56B4E9")
+
+ 
+## stacked bar chart with legend on side 
+
+data <- data %>% filter(outcome =="DTG ART")
+ 
+
+ggplot(data, aes(x=recart_date, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 2, linetype = 1) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_classic() + 
+  theme(legend.position="right", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        #legend.title = element_blank(),
+        axis.title.y = element_text(size=11),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10),
+        legend.text = element_text(size=10)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x="", y="Percentage initiating DTG ART (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  guides(color = guide_legend(title = "Initiating DTG ART", reverse=FALSE)) +
+  facet_wrap(vars(age_cat3), nrow=5) +
+  ggtitle("Proportion newly initiating DTG ART among males & females \n aggregated by month") 
+
+ggsave("output/Cohort_initiation/DTG_by_sex_by_month.png", width = 7, height =8)  
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Proportion initiating DTG ART by sex by 6-month time period
+
+## by country 
+
+
+```{r include=FALSE}
+
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month")) 
+#frq(tblBAS, recart_date)
+
+tblBAS <- tblBAS %>%
+  mutate(period = ifelse(recart_date < "2019-01-01", 1, 
+                         ifelse(recart_date < "2019-07-01", 2,
+                         ifelse(recart_date < "2020-01-01", 3, 
+                                ifelse(recart_date < "2020-07-01", 4,
+                                       ifelse(recart_date < "2021-01-01", 5,
+                                       ifelse(recart_date < "2021-07-01", 6,
+                                            ifelse(recart_date < "2022-01-01", 7,
+                                                ifelse(recart_date < "2022-07-01", 8, 9)))))))))
+
+
+frq(tblBAS, period)
+frq(tblBAS, age_cat2)
+
+test <- tblBAS %>%  filter(recart_d <= end_date)
+frq(test, period)        
+                      
+
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>%
+  filter(recart_d <= end_date) %>%
+  filter(age_cat2 == "[20,50)") %>%
+  group_by(ctry, sex, dtg_recomend_d, period) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>%
+    filter(recart_d <= end_date) %>%
+  filter(age_cat2 == "[20,50)") %>%
+  group_by(ctry, sex, dtg_recomend_d, period) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+```
+
+
+
+```{r}
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART","Other ART"))
+
+
+data$period <- factor(data$period, levels = c( 1,2,3,4,5,6,7,8, 9),
+labels = c("<2019","early 2019", "end 2019", "early 2020", "end 2020", "early 2021", "end 2021", "early 2022", "end 2022"))
+
+fill <- c( "darkblue", "#56B4E9")
+
+data <- data %>% filter(outcome == "DTG ART")
+
+
+data <- data %>%
+    mutate(text = round(value)) %>%
+    mutate(text2 = "%") %>%
+    mutate(text3 = paste(text, text2, sep="")) %>%
+    mutate(text4 = paste("(", numer, ")", sep="")) %>%
+    mutate(text5 = paste(text3,"\n ", text4, sep=""))
+
+ 
+## stacked bar chart with legend on side 
+
+
+ggplot(data, aes(x=factor(period), y=value, fill=sex)) + 
+    geom_bar(stat="identity",width = 0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_classic() + 
+  theme(legend.position="right", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        #legend.title = element_blank(),
+        axis.title.y = element_text(size=11),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10),
+        legend.text = element_text(size=10)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x="", y="Percentage initiating DTG ART (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  scale_x_discrete(name = '') +
+  guides(fill = guide_legend(title = "Initiating DTG ART", reverse=FALSE)) +
+  facet_wrap(vars(ctry), nrow=5) +
+  ggtitle("Proportion newly initiating DTG ART among males & females 20-50 years  \n aggregated by 6-month time period") 
+
+ggsave("output/Cohort_initiation/DTG_by_sex_over_time_period.png", width = 7, height =8)  
+
+```
+
+
+## by ZAF program
+
+
+```{r include=FALSE}
+
+
+tblBAS <- tblBAS %>%
+  mutate(recart_date = floor_date(as_date(recart_d), "month")) 
+#frq(tblBAS, recart_date)
+
+tblBAS <- tblBAS %>%
+  mutate(period = ifelse(recart_date < "2019-01-01", 1, 
+                         ifelse(recart_date < "2019-07-01", 2,
+                         ifelse(recart_date < "2020-01-01", 3, 
+                                ifelse(recart_date < "2020-07-01", 4,
+                                       ifelse(recart_date < "2021-01-01", 5,
+                                       ifelse(recart_date < "2021-07-01", 6,
+                                            ifelse(recart_date < "2022-01-01", 7,
+                                                ifelse(recart_date < "2022-07-01", 8, 9)))))))))
+
+
+frq(tblBAS, period)
+frq(tblBAS, age_cat2)
+
+test <- tblBAS %>%  filter(recart_d <= end_date)
+frq(test, period)        
+                      
+
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(country =="ZAF") %>%
+  filter(recart_d <= end_date) %>%
+  filter(age_cat2 == "[20,50)") %>%
+  group_by(program, sex, dtg_recomend_d, period) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+  
+dtg2 <- tblBAS %>% filter(country =="ZAF") %>%
+    filter(recart_d <= end_date) %>%
+  filter(age_cat2 == "[20,50)") %>%
+  group_by(program, sex, dtg_recomend_d, period) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+```
+
+
+
+```{r}
+
+data <- rbind(dtg1, dtg2)
+
+data$outcome <- factor(data$outcome, levels = c( "a","b"),
+                       labels = c("DTG ART","Other ART"))
+
+
+data$period <- factor(data$period, levels = c( 1,2,3,4,5,6,7,8, 9),
+labels = c("<2019","early 2019", "end 2019", "early 2020", "end 2020", "early 2021", "end 2021", "early 2022", "end 2022"))
+
+fill <- c( "darkblue", "#56B4E9")
+
+data <- data %>% filter(outcome == "DTG ART")
+
+
+data <- data %>%
+    mutate(text = round(value)) %>%
+    mutate(text2 = "%") %>%
+    mutate(text3 = paste(text, text2, sep="")) %>%
+    mutate(text4 = paste("(", numer, ")", sep="")) %>%
+    mutate(text5 = paste(text3,"\n ", text4, sep=""))
+
+ 
+## stacked bar chart with legend on side 
+
+
+ggplot(data, aes(x=factor(period), y=value, fill=sex)) + 
+    geom_bar(stat="identity",width = 0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_classic() + 
+  theme(legend.position="right", 
+        legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.box.margin = margin(t = 1, l = 1), 
+        #legend.title = element_blank(),
+        axis.title.y = element_text(size=11),
+        axis.title.x = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=10),
+        legend.text = element_text(size=10)) +
+  theme(axis.text.x=element_text(angle=90,hjust=1)) +
+  labs(x="", y="Percentage initiating DTG ART (%)") +
+  scale_y_continuous(n.breaks = 5) +
+  scale_x_discrete(name = '') +
+  guides(fill = guide_legend(title = "Initiating DTG ART", reverse=FALSE)) +
+  facet_wrap(vars(program), nrow=6) +
+  ggtitle("Proportion newly initiating DTG ART among males & females 20-50 years  \n aggregated by 6-month time period") 
+
+ggsave("output/Cohort_initiation/DTG_ZAF_by_sex_over_time_period.png", width = 5, height =8)  
+
+```
+
+
+```{r}
+temp <- tblBAS %>% filter(country =="ZAF")
+frq(temp, program)
+sjPlot::tab_xtab(temp$program,
+                 temp$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# ART at initiation over time: histograms (bi-directional)
+
+Number and timing of when patients newly started DTG ART vs other ART.
+
+These are **patient records**, *aggregated by their ART start date*.  
+
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, dtg_first_txt)
+
+```
+
+
+## by program
+
+```{r include=FALSE}
+dtg_type_by_var = tblBAS %>% 
+  group_by(program, country, ctry, recart_d, dtg_first, dtg_first_txt, dtg_recomend_d, max_close_d) %>% 
+  summarise(art_started = n()) %>%
+  ungroup() %>% 
+  mutate(art_started = ifelse(dtg_first == 1, art_started, art_started * (-1))) %>%
+  mutate(start_min_d = dtg_recomend_d) %>%
+  mutate(end_max_d = max_close_d)
+```
+
+
+### ZAF programs 
+
+```{r echo=FALSE}
+#fill <- c("deepskyblue1", "royalblue4")
+fill <- c("#D55E00","#56B4E9")
+
+dtg_type_by_var %>% 
+  filter(country == "ZAF") %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_grid(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("") +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+### non-ZAF programs 
+
+```{r echo=FALSE}
+
+dtg_type_by_var %>% 
+  filter(country != "ZAF") %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_grid(vars(program), scales = "free_y") +
+  theme_minimal() + 
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("") +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+
+## by country 
+
+```{r echo=FALSE}
+dtg_type_by_var = tblBAS %>% 
+  group_by(country, ctry, recart_d, dtg_first, dtg_first_txt, dtg_recomend_d, max_close_d) %>% 
+  summarise(art_started = n()) %>%
+  ungroup() %>% 
+  mutate(art_started = ifelse(dtg_first == 1, art_started, art_started * (-1))) %>%
+  mutate(start_min_d = dtg_recomend_d) %>%
+  mutate(end_max_d = max_close_d)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+dtg_type_by_var %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_wrap(vars(ctry), nrow =2, scales="free_y") +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("")  +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+
+```{r echo=FALSE}
+
+dtg_type_by_var %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_grid(vars(ctry), scales="free_y") +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("")  +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+
+## by sex
+
+```{r echo=FALSE}
+dtg_type_by_var = tblBAS %>% 
+  filter(recart_d <= end_date) %>%
+  group_by(sex, recart_d, dtg_first, dtg_first_txt, dtg_recomend_d, max_close_d) %>% 
+  summarise(art_started = n()) %>%
+  ungroup() %>% 
+  mutate(art_started = ifelse(dtg_first == 1, art_started, art_started * (-1))) %>%
+  mutate(start_min_d = dtg_recomend_d) %>%
+  mutate(end_max_d = max_close_d)
+```
+
+
+```{r echo=FALSE}
+
+dtg_type_by_var %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_wrap(vars(sex), nrow =1) +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("") +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+
+## by sex & age
+
+
+```{r echo=FALSE}
+dtg_type_by_var = tblBAS %>% 
+  group_by(sex_age2, age_cat2, recart_d, dtg_first, dtg_first_txt, dtg_recomend_d, max_close_d) %>% 
+  summarise(art_started = n()) %>%
+  ungroup() %>% 
+  mutate(art_started = ifelse(dtg_first == 1, art_started, art_started * (-1))) %>%
+  mutate(start_min_d = dtg_recomend_d) %>%
+  mutate(end_max_d = max_close_d)
+```
+
+
+```{r include=FALSE}
+frq(tblBAS, age_cat2)
+
+fill <- c("#D55E00","#56B4E9")
+
+y <- dtg_type_by_var %>% filter(age_cat2 == "[20,50)") %>%
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_wrap(vars(sex_age2), nrow =1) +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("") +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+
+y
+
+o <- dtg_type_by_var %>% filter(age_cat2 == "[50,100]") %>%
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_wrap(vars(sex_age2), nrow =1) +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("") +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+
+o
+
+```
+
+
+```{r echo=FALSE}
+ggarrange(y, o, ncol =1, nrow =2, common.legend = TRUE, legend = "right") 
+```
+
+
+```{r eval=FALSE, include=FALSE}
+dtg_type_by_var %>% 
+  ggplot(aes(x = recart_d, y = art_started, fill = dtg_first_txt)) +
+  geom_col() +
+  facet_grid(vars(sex_age2), scales="free_y") +
+  theme_minimal() +
+  labs(fill ="ART initiation") +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+  ylab("Number of patients") + xlab("")  +
+  guides(fill = guide_legend(reverse=TRUE, byrow=TRUE)) +
+  coord_cartesian(xlim = c(min(as.Date(dtg_type_by_var$start_min_d)), max(as.Date(dtg_type_by_var$end_max_d))))
+```
+
+
+
+```{r include=FALSE}
+rm("y", "o")
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Outcomes
+
+```{r eval=FALSE, include=FALSE}
+
+frq(tblBAS, dtg_first)
+
+tblBAS[, start_fu := recart_d] 
+tblBAS[, end_fu := rev_outcome_d] 
+
+tblBAS[, FU_day := as.numeric(end_fu - start_fu)]
+tblBAS[, FU_month := round(as.numeric(end_fu - start_fu) / (365.25 / 12), 1)]
+tblBAS[, FU_year := round(as.numeric(end_fu - start_fu) / (365.25), 1)]
+
+tblBAS[, time := FU_day]
+```
+
+
+```{r}
+table1::label(tblBAS$sex) <- "Sex"
+table1::label(tblBAS$age_cat3) <- "Age group"
+
+table1::label(tblBAS$rev_outcome) <- "Outcome"
+table1::label(tblBAS$sex_age2) <- "Sex & age group"
+table1::label(tblBAS$sex_age3) <- "Sex & age group"
+table1::label(tblBAS$program) <- "Program"
+table1::label(tblBAS$ctry) <- "Country"
+
+```
+
+```{r}
+FU_time <- tblBAS %>% mutate(dtg_comp_b = ifelse(rev_outcome == "RIC", 0, 1))
+```
+
+```{r include=FALSE}
+ # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  
+frq(FU_time, rev_outcome)
+
+
+FU_time <- FU_time %>% 
+  mutate(
+    
+dtg_first_txt_crr1b = case_when(
+    rev_outcome == "RIC" ~ 0, # still alive RIC (retained in care)
+    rev_outcome == "Death" ~ 1, # outcome Death
+    rev_outcome == "Transfer" ~ 2, # outcome LTFU
+    rev_outcome == "LTFU" ~ 3), # outcome Transfer
+)
+
+
+FU_time$dtg_first_txt_crr1b.factor <- factor(FU_time$dtg_first_txt_crr1b, 
+levels=c("0", "1", "2", "3"),
+labels = c("a", "b", "c", "d"))
+
+```
+
+
+```{r include=FALSE}
+# create two subcohorts: intitated DTG & did not initiate DTG
+frq(FU_time, dtg)
+frq(FU_time, rev_outcome)
+
+FU_time_DTG <- FU_time %>% filter(dtg_first == 1)
+FU_time_noDTG <- FU_time %>% filter(dtg_first == 0)
+
+```
+
+
+
+## All adults
+
+
+```{r eval=FALSE, include=FALSE}
+
+## by country
+sjPlot::tab_xtab(FU_time_DTG$ctry,
+                 FU_time_DTG$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+Cumulative incidence plot of outcomes among adults initiating DTG ART in first 4 years.
+
+```{r include=FALSE}
+fit1 <- survfit2(Surv(time, dtg_comp_b) ~ dtg_first, data = FU_time, etype = dtg_first_txt_crr1b.factor)
+ggcompetingrisks(fit = fit1) +
+ facet_wrap(~strata, ncol = 1)
+
+```
+
+
+```{r}
+
+p01 <-ggcompetingrisks(fit = fit1,
+                 xlab = "Years since ART initiation", 
+                  ylab = "Cumulative incidence",
+                 title = "Outcomes among adults initiating ART") +
+     scale_x_continuous(breaks = c(0, 365,  730, 1095, 1460 ), limits = c(0,1460), 
+                        labels = c("0", "1", "2", "3", "4")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 1, labeller = labeller(strata = 
+      c("dtg_first=0" = "Initiated other ART", 
+        "dtg_first=1" = "Initiated DTG"
+)))
+
+
+#p4
+
+p02dtg <- p01 + theme(axis.title = element_text(size = 14),
+          plot.title = element_text(hjust = 0.5), #center title
+          axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0), size = 14), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 14), #pad x axis label
+          axis.text.x = element_text(size = 13),
+          axis.text.y = element_text(size = 13),
+          axis.text = element_text(size = 13),
+          legend.text = element_text(size = 13),
+          legend.title = element_text(size = 13),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"), 
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 12)) +
+  guides(color = guide_legend(ncol = 2))  
+  
+
+p02dtg
+
+ggsave("output/Cohort_initiation/Fig4_Initiation_adults_Cumul_incid_all_outcomes.png", width = 7, height =6)
+
+```
+
+
+## by sex
+
+```{r include=FALSE}
+
+fit1c <- survfit2(Surv(time, dtg_comp_b) ~ dtg_first + sex, data = FU_time, etype = dtg_first_txt_crr1b.factor)
+ggcompetingrisks(fit = fit1c) +
+ facet_wrap(~strata, ncol = 2)
+```
+
+
+```{r}
+
+p03 <-ggcompetingrisks(fit = fit1c,
+                 xlab = "Years since ART initiation", 
+                  ylab = "Cumulative incidence",
+                 title = "Outcomes among adults initiating ART") +
+     scale_x_continuous(breaks = c(0, 365,  730, 1095, 1460 ), limits = c(0,1460), 
+                        labels = c("0", "1", "2", "3", "4")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 2, labeller = labeller(strata = 
+      c("dtg_first=0, sex=Female" = "Other ART, female", 
+        "dtg_first=0, sex=Male  " = "Other ART, male", 
+        "dtg_first=1, sex=Female" = "Initiated DTG, female",
+        "dtg_first=1, sex=Male  " = "Initiated DTG, male"
+)))
+
+#p4
+
+p04 <- p03 + theme(axis.title = element_text(size = 14),
+          plot.title = element_text(hjust = 0.5), #center title
+          axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0), size = 14), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 14), #pad x axis label
+          axis.text.x = element_text(size = 13),
+          axis.text.y = element_text(size = 13),
+          axis.text = element_text(size = 13),
+          legend.text = element_text(size = 13),
+          legend.title = element_text(size = 13),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"), 
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 14)
+          ) +
+  guides(color = guide_legend(ncol = 2))  
+  
+
+p04
+
+ggsave("output/Cohort_initiation/Fig4_Initiation_sex_Cumul_incid_all_outcomes.png", width = 7, height =6)
+```
+
+
+
+## by country
+
+```{r include=FALSE}
+
+fit1b <- survfit2(Surv(time, dtg_comp_b) ~ ctry + dtg_first , data = FU_time, etype = dtg_first_txt_crr1b.factor)
+
+ggcompetingrisks(fit = fit1b) + 
+ facet_wrap(~strata, ncol = 1)
+
+ggcompetingrisks(fit = fit1b) + 
+ facet_wrap(~strata, ncol = 2)
+
+ggcompetingrisks(fit = fit1b) + 
+ facet_wrap(~strata, ncol = 3)
+```
+
+
+```{r}
+
+p05 <-ggcompetingrisks(fit = fit1b,
+                 xlab = "Years since ART initiation", 
+                  ylab = "Cumulative incidence",
+                 title = "Outcomes among adults initiating ART") +
+     scale_x_continuous(breaks = c(0, 365,  730, 1095, 1460 ), limits = c(0,1460), 
+                        labels = c("0", "1", "2", "3", "4")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 2, labeller = labeller(strata = 
+      c("ctry=Lesotho, dtg_first=0" = "Lesotho, other ART", 
+        "ctry=Lesotho, dtg_first=1" = "Lesotho, DTG ART", 
+        
+         "ctry=Malawi, dtg_first=0" = "Malawi, other ART", 
+        "ctry=Malawi, dtg_first=1" = "Malawi, DTG ART", 
+       
+        "ctry=Mozambique, dtg_first=0" = "Mozambique, other ART", 
+        "ctry=Mozambique, dtg_first=1" = "Mozambique, DTG ART", 
+                
+        "ctry=South Africa, dtg_first=0" = "South Africa, other ART", 
+        "ctry=South Africa, dtg_first=1" = "South Africa, DTG ART", 
+        
+        "ctry=Zambia, dtg_first=0" = "Zambia, other ART", 
+        "ctry=Zambia, dtg_first=1" = "Zambia, DTG ART", 
+        
+         "ctry=Zimbabwe, dtg_first=0" = "Zimbabwe, other ART", 
+        "ctry=Zimbabwe, dtg_first=1" = "Zimbabwe, DTG ART"
+)))
+
+#p4
+
+p06 <- p05 + theme(axis.title = element_text(size = 14),
+          plot.title = element_text(hjust = 0.5), #center title
+          axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0), size = 14), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 14), #pad x axis label
+          axis.text.x = element_text(size = 13),
+          axis.text.y = element_text(size = 13),
+          axis.text = element_text(size = 13),
+          legend.text = element_text(size = 13),
+          legend.title = element_text(size = 13),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"), 
+         # strip.background = element_blank(),
+          strip.text.x = element_text(size = 14)
+          ) +
+  guides(color = guide_legend(ncol = 2))  
+  
+
+#p06
+
+#ggsave("output/Cohort_initiation/Fig4_Initiation_ctry_Cumul_incid_all_outcomes.png", width = 5, height =7)
+```
+
+```{r echo=FALSE, fig.height=10, fig.width=7}
+p06
+```
+
+
+```{r include=FALSE}
+p06
+
+ggsave("output/Cohort_initiation/Fig4_Initiation_ctry_Cumul_incid_all_outcomes.png", width = 5, height =7)
+```
+
+
+## by country & sex
+
+```{r include=FALSE}
+
+fit1d <- survfit2(Surv(time, dtg_comp_b) ~ country +  dtg_first + sex, data = FU_time, etype = dtg_first_txt_crr1b.factor)
+
+ggcompetingrisks(fit = fit1d) + 
+ facet_wrap(~strata, ncol = 4)
+
+```
+
+
+```{r}
+
+p20 <-ggcompetingrisks(fit = fit1d,
+                 xlab = "Years since ART initiation", 
+                  ylab = "Cumulative incidence",
+                 title = "Outcomes among adults initiating ART") +
+     scale_x_continuous(breaks = c(0, 365,  730, 1095, 1460 ), limits = c(0,1460), 
+                        labels = c("0", "1", "2", "3", "4")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 4, labeller = labeller(strata = 
+      c("country=LSO, dtg_first=0, sex=Female" = "Lesotho, other ART, female", 
+        "country=LSO, dtg_first=0, sex=Male  " = "Lesotho, other ART, male", 
+        "country=LSO, dtg_first=1, sex=Female" = "Lesotho, DTG ART, female", 
+        "country=LSO, dtg_first=1, sex=Male  " = "Lesotho, DTG ART, male", 
+        
+ "country=MWI, dtg_first=0, sex=Female" = "Malawi, other ART, female", 
+        "country=MWI, dtg_first=0, sex=Male  " = "Malawi, other ART, male", 
+        "country=MWI, dtg_first=1, sex=Female" = "Malawi, DTG ART, female", 
+        "country=MWI, dtg_first=1, sex=Male  " = "Malawi, DTG ART, male", 
+       
+ "country=MOZ, dtg_first=0, sex=Female" = "Mozambique, other ART, female", 
+        "country=MOZ, dtg_first=0, sex=Male  " = "Mozambique, other ART, male", 
+        "country=MOZ, dtg_first=1, sex=Female" = "Mozambique, DTG ART, female", 
+        "country=MOZ, dtg_first=1, sex=Male  " = "Mozambique, DTG ART, male", 
+                
+ "country=ZAF, dtg_first=0, sex=Female" = "South Africa, other ART, female", 
+        "country=ZAF, dtg_first=0, sex=Male  " = "South Africa, other ART, male", 
+        "country=ZAF, dtg_first=1, sex=Female" = "South Africa, DTG ART, female", 
+        "country=ZAF, dtg_first=1, sex=Male  " = "South Africa, DTG ART, male", 
+ 
+ "country=ZMB, dtg_first=0, sex=Female" = "Zambia, other ART, female", 
+        "country=ZMB, dtg_first=0, sex=Male  " = "Zambia, other ART, male", 
+        "country=ZMB, dtg_first=1, sex=Female" = "Zambia, DTG ART, female", 
+        "country=ZMB, dtg_first=1, sex=Male  " = "Zambia, DTG ART, male", 
+        
+ "country=ZWE, dtg_first=0, sex=Female" = "Zimbabwe, other ART, female", 
+        "country=ZWE, dtg_first=0, sex=Male  " = "Zimbabwe, other ART, male", 
+        "country=ZWE, dtg_first=1, sex=Female" = "Zimbabwe, DTG ART, female", 
+        "country=ZWE, dtg_first=1, sex=Male  " = "Zimbabwe, DTG ART, male"
+)))
+
+#p20
+
+p21 <- p20 + theme(axis.title = element_text(size = 10),
+          plot.title = element_text(hjust = 0.5), #center title
+          axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0), size = 10), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 10), #pad x axis label
+          axis.text.x = element_text(size = 10),
+          axis.text.y = element_text(size = 10),
+          axis.text = element_text(size = 10),
+          legend.text = element_text(size = 10),
+          legend.title = element_text(size = 10),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"), 
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 10)
+          ) +
+  guides(color = guide_legend(ncol = 2))
+  
+  
+
+p21
+
+ggsave("output/Cohort_initiation/Fig4_Initiation_ctry_sex_Cumul_incid_all_outcomes.png", width = 10, height =6)
+```
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

@@ -1,0 +1,633 @@
+---
+title: "SA256 DTG uptake <br> tblLAB_RNA, tblLAB_CD4"
+subtitle: " "
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+import::from("psych", "geometric.mean")
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(
+  cache = FALSE,
+  prompt = FALSE,
+  tidy = FALSE,
+  comment = NA,
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+
+# IeDEA-SA Data Prep
+
+Raw Stata and `fst` files come from central directory of `IeDEA_core`.  
+
+Using release `Stata_202308_Aug`.  
+
+```{r eval=FALSE, include=FALSE}
+list.files("../IeDEA_core/data/Stata_202308_Aug/", pattern = "\\.fst$") %>%
+  kable(col.names = "Datasets - new") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = F
+  )
+```
+
+## Druglist
+
+Updated `druglist` dataset from the `ART-codes` repo.   
+
+```{r include=FALSE}
+druglist = data.table(readr::read_csv("https://raw.githubusercontent.com/IeDEA-SA/ART-codes/main/data-raw/IeDEA_druglist.csv"))[, c("drug_orig") := NULL]
+
+druglist[, drug := trimws(drug, which = "both")]
+```
+
+```{r echo=FALSE}
+druglist %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+druglist = druglist[, .(art_id, drug, arv_class)]
+```
+
+## Official DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+```
+
+```{r echo=FALSE}
+dtg_recomend %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+```{r}
+
+rev_close_d = data.table(read_fst("data_temp/rev_close_d_v001.fst"))
+
+program_close_d = data.table(read_fst("data_temp/program_close_d_v001.fst"))
+
+tblCENTER = data.table(read_fst("data_temp/tblCENTER_v001.fst"))
+
+tblBAS = data.table(read_fst("data_temp/tblBAS_v002.fst"))
+
+tblLTFU = data.table(read_fst("data_temp/tblLTFU_v002.fst"))
+
+tblART = data.table(read_fst("data_temp/tblART_v002.fst"))
+
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# `tblLAB_RNA`
+
+```{r}
+tblLAB_RNA = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblLAB_RNA.fst"))[, c("rna_t") := NULL]
+```
+
+Starting point is `r number(nrow(tblLAB_RNA), big.mark = ",")` ART records of `r number(length(unique(tblLAB_RNA$patient)), big.mark = ",")` patients from all combined cohorts.  
+
+## BAS overlap
+
+```{r}
+tblLAB_RNA = merge(tblBAS[, .(patient, program)],
+                   tblLAB_RNA,
+                   by = c("patient"),
+                   all.x = FALSE, all.y = FALSE
+)
+```
+
+## Keep unique rows
+
+```{r}
+if (nrow(tblLAB_RNA) - nrow(unique(tblLAB_RNA)) > 0) {
+  tblLAB_RNA = unique(tblLAB_RNA)
+}
+```
+
+## `close_d` 
+
+Program level, maximum `close_d` was brought from revised close dates.  
+
+```{r echo=FALSE}
+tblLAB_RNA = merge(tblLAB_RNA, program_close_d, by = "program",
+                   all.x = TRUE, all.y = FALSE)
+```
+
+## Dates
+
+- excluding records with missing dates
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, is.na(rna_d))
+```
+
+```{r include=FALSE}
+tblLAB_RNA = tblLAB_RNA[!is.na(rna_d), ]
+```
+
+<!-- - keeping only precise dates (note: `rna_d_a` only available in new data formats) -->
+
+```{r include=FALSE}
+# date approximation
+# might need processing if values other than `D`!
+# frq(tblLAB_RNA, rna_d_a)
+tblLAB_RNA[, rna_d_a := NULL]
+```
+
+## Exclusion: implausible dates 
+
+- removing tests done after official close dates of the cohort (`max_close_d`)
+
+```{r echo=FALSE}
+# View(tblLAB_RNA[rna_d > max_close_d, ])
+frq(tblLAB_RNA, rna_d > max_close_d)
+```
+
+```{r include=FALSE}
+tblLAB_RNA = tblLAB_RNA[!(rna_d > max_close_d), ]
+```
+
+- remove tests done before 2003
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, rna_d < as.Date("2003-01-01"))
+```
+
+```{r include=FALSE}
+tblLAB_RNA = tblLAB_RNA[!(rna_d < as.Date("2003-01-01")), ]
+```
+
+## Missing lab values
+
+```{r echo=FALSE}
+# View(tblLAB_RNA[is.na(rna_v), ])
+frq(tblLAB_RNA, is.na(rna_v))
+# frq(tblLAB_RNA[is.na(rna_v), ], program)
+```
+
+```{r include=FALSE}
+tblLAB_RNA = tblLAB_RNA[!is.na(rna_v), ]
+```
+
+## Undetectable VL
+
+Replacing undetectable viral load with `detection limit value - 1`, for negative values of `rna_v` use *inverse of that value minus one* instead   
+
+```{r eval=FALSE, include=FALSE}
+# see also info on -88 codes
+# https://github.com/IeDEA-SA/IeDEA_data-quality/issues/35
+frq(tblLAB_RNA[rna_v < 0, ], rna_v)
+frq(tblLAB_RNA[rna_v < 0, ], rna_l)
+# temp = as.data.frame(table(tblLAB_RNA[rna_v < 0, ]$rna_v, tblLAB_RNA[rna_v < 0, ]$rna_l))
+```
+
+```{r}
+tblLAB_RNA[, rna_v_orig := rna_v]
+tblLAB_RNA[, rna_corr := 0]
+
+# frq(tblLAB_RNA, rna_v == -1 & rna_l > 0 & !is.na(rna_l))
+# frq(tblLAB_RNA[rna_v == -1 & rna_l > 0 & !is.na(rna_l), ], rna_l)
+tblLAB_RNA[rna_v == -1 & rna_l > 0 & !is.na(rna_l), rna_corr := 1]
+tblLAB_RNA[rna_v == -1 & rna_l > 1 & !is.na(rna_l), rna_v := rna_l - 1]
+tblLAB_RNA[rna_v == -1 & rna_l == 1 & !is.na(rna_l), rna_v := 1]
+
+# frq(tblLAB_RNA, rna_v == -1 & rna_l == 0)
+tblLAB_RNA[rna_v == -1 & rna_l == 0, rna_corr := 1]
+tblLAB_RNA[rna_v == -1 & rna_l == 0, rna_v := 1]
+
+# frq(tblLAB_RNA, rna_v == -1 & is.na(rna_l))
+tblLAB_RNA[rna_v == -1 & is.na(rna_l), rna_corr := 1]
+tblLAB_RNA[rna_v == -1 & is.na(rna_l), rna_v := 1]
+
+# frq(tblLAB_RNA, rna_v < -1 & is.na(rna_l))
+# frq(tblLAB_RNA[rna_v < -1 & is.na(rna_l), ], rna_v)
+tblLAB_RNA[rna_v < -1 & is.na(rna_l), rna_corr := 1]
+tblLAB_RNA[rna_v < -1 & is.na(rna_l), rna_v := (rna_v * -1) - 1]
+
+# frq(tblLAB_RNA, rna_v < -1 & !is.na(rna_l))
+# frq(tblLAB_RNA[rna_v < -1 & !is.na(rna_l), ], rna_v)
+# frq(tblLAB_RNA[rna_v < -1 & !is.na(rna_l), ], rna_l)
+tblLAB_RNA[rna_v < -1 & !is.na(rna_l), rna_corr := 1]
+tblLAB_RNA[rna_v < -1 & !is.na(rna_l), rna_v := rna_l - 1]
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblLAB_RNA, rna_corr)
+summary(tblLAB_RNA$rna_v)
+tblLAB_RNA[, rna_v_orig := NULL]
+```
+
+## Multiple daily records
+
+There are patients having 2-3 measurements per day; *geometric* mean of measurements was taken in such cases
+
+```{r echo=FALSE}
+tblLAB_RNA[, rna_daily := .N, by = c("patient", "rna_d")]
+frq(tblLAB_RNA, rna_daily)
+# View(tblLAB_RNA[rna_daily > 1, ])
+```
+
+Example:  
+
+```{r echo=FALSE}
+tblLAB_RNA[patient == "I_SA_CIDRZ_308621-01" & rna_d == as.Date("2018-09-12"), ][, !c("program", "rna_l", "max_close_d")]
+```
+
+```{r include=FALSE}
+tblLAB_RNA[rna_daily > 1 & rna_corr == 0, rna_corr := 1]
+tblLAB_RNA[rna_daily > 1 & rna_v == 0, rna_v := 1]
+
+tblLAB_RNA[, rna_v := geometric.mean(rna_v), by = c("patient", "rna_d")]
+tblLAB_RNA[, rna_order := 1:.N, by = c("patient", "rna_d")]
+tblLAB_RNA = tblLAB_RNA[rna_order == 1, ]
+tblLAB_RNA[, c("rna_order", "rna_daily") := NULL]
+```
+
+## Share of corrected records 
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, rna_corr)
+```
+
+## Categorical VL
+
+Created two types of categories (rna_v_cat1 & rna_v_cat2).  
+
+```{r eval=FALSE, include=FALSE}
+summary(tblLAB_RNA$rna_v)
+max(tblLAB_RNA$rna_v)
+frq(tblLAB_RNA, is.na(rna_v))
+```
+
+```{r include=FALSE}
+tblLAB_RNA$rna_v_cat1 = cut(tblLAB_RNA$rna_v,
+                            breaks = c(
+                              0, 50, 200, 400, 1000,
+                              max(tblLAB_RNA$rna_v, na.rm = TRUE) + 1
+                            ),
+                            labels = c("< 50", "50-199", "200-399", "400-999", ">= 1000"),
+                            right = FALSE
+)
+```
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, rna_v_cat1)
+```
+
+```{r include=FALSE}
+tblLAB_RNA$rna_v_cat2 = cut(tblLAB_RNA$rna_v,
+                            breaks = c(
+                              0, 50, 1000,
+                              max(tblLAB_RNA$rna_v, na.rm = TRUE) + 1
+                            ),
+                            labels = c("< 50", "50-999", ">= 1000"),
+                            right = FALSE
+)
+```
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, rna_v_cat2)
+```
+
+## Binary low level viremia indicator
+
+```{r include=FALSE}
+tblLAB_RNA$rna_viremia = ifelse(tblLAB_RNA$rna_v >= 50 & tblLAB_RNA$rna_v <= 500,
+                                1, 0
+)
+```
+
+```{r echo=FALSE}
+frq(tblLAB_RNA, rna_viremia)
+```
+
+## Count and order of lab results
+
+Lab count and order were then calculated  
+
+```{r include=FALSE}
+tblLAB_RNA = tblLAB_RNA[, .(
+  patient, program,
+  rna_d, rna_v,
+  rna_v_cat1, rna_v_cat2, rna_viremia
+)]
+
+setorder(tblLAB_RNA, patient, rna_d)
+tblLAB_RNA[, rna_count := .N, by = patient]
+tblLAB_RNA[, rna_order := 1:.N, by = patient]
+
+# frq(tblLAB_RNA$rna_count)
+# frq(tblLAB_RNA$rna_order)
+```
+
+## Patients without any lab
+
+```{r include=FALSE}
+# patients with any art
+include = unique(tblLAB_RNA[, .(patient)])
+
+# anti join - so patients without any art here
+no_rna = setDT(tblBAS)[!include, on = "patient"]
+```
+
+There are `r number(nrow(no_rna), big.mark = ",")` patients from all combined cohorts *without any RNA record*. 
+
+```{r include=FALSE}
+rm(include, no_rna); gc()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# `tblLAB_CD4`
+
+```{r}
+tblLAB_CD4 = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblLAB_CD4.fst"))
+```
+
+Starting point is `r number(nrow(tblLAB_CD4), big.mark = ",")` ART records of `r number(length(unique(tblLAB_CD4$patient)), big.mark = ",")` patients from all combined cohorts.  
+
+## BAS overlap
+
+```{r}
+tblLAB_CD4 = merge(tblBAS[, .(patient, program)],
+                   tblLAB_CD4,
+                   by = c("patient"),
+                   all.x = FALSE, all.y = FALSE
+)
+```
+
+## Keep unique rows
+
+```{r}
+# remove duplicate rows
+tblLAB_CD4 = distinct(tblLAB_CD4)
+```
+
+## `close_d` 
+
+Program level, maximum `close_d` was brought from revised close dates.  
+
+```{r echo=FALSE}
+tblLAB_CD4 = merge(tblLAB_CD4, program_close_d, by = "program",
+                   all.x = TRUE, all.y = FALSE)
+```
+
+## Dates 
+
+- recoding lab values with `cd4_d` bigger than today to `NA`s
+
+```{r echo=FALSE}
+# View(tblLAB_CD4[cd4_d >= Sys.Date(), ])
+frq(tblLAB_CD4, cd4_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblLAB_CD4[cd4_d >= Sys.Date(), cd4_d := NA]
+```
+
+- excluding records with missing dates
+
+```{r echo=FALSE}
+frq(tblLAB_CD4, is.na(cd4_d))
+```
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[!is.na(cd4_d), ]
+```
+
+<!-- - keeping only precise dates (note: `cd4_d_a` only available in new data formats) -->
+
+```{r include=FALSE}
+# might need processing if values other than `D`!
+# frq(tblLAB_CD4, cd4_d_a)
+tblLAB_CD4[, cd4_d_a := NULL]
+```
+
+## Exclusion: implausible dates 
+
+- removing tests done after official close dates of the cohort (`max_close_d`)
+
+```{r echo=FALSE}
+# View(tblLAB_CD4[cd4_d > max_close_d, ])
+frq(tblLAB_CD4, cd4_d > max_close_d)
+```
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[!(cd4_d > max_close_d), ]
+```
+
+- remove tests done before 2003
+
+```{r echo=FALSE}
+frq(tblLAB_CD4, cd4_d < as.Date("2003-01-01"))
+```
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[cd4_d >= as.Date("2003-01-01"), ]
+```
+
+## Missing or implausible values
+
+- missing lab values
+
+```{r echo=FALSE}
+# View(tblLAB_CD4[is.na(cd4_v), ])
+frq(tblLAB_CD4, is.na(cd4_v))
+```
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[!is.na(cd4_v), ]
+```
+
+- below `0` 
+
+```{r echo=FALSE}
+# View(tblLAB_CD4[cd4_v < 0, ])
+frq(tblLAB_CD4, cd4_v < 0)
+```
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[!(cd4_v < 0), ]
+```
+
+## Multiple daily records
+
+There are patients having 2-3 measurements per day; mean of measurements was taken in such cases  
+
+```{r echo=FALSE}
+tblLAB_CD4[, cd4_daily := .N, by = c("patient", "cd4_d")]
+frq(tblLAB_CD4, cd4_daily)
+```
+
+```{r include=FALSE}
+# View(tblLAB_CD4[cd4_daily > 1, ])
+# tblLAB_CD4[patient == "KI06000017459", ] # (sic!)
+
+tblLAB_CD4[, cd4_v := mean(cd4_v), by = c("patient", "cd4_d")]
+tblLAB_CD4[, cd4_order := 1:.N, by = c("patient", "cd4_d")]
+tblLAB_CD4 = tblLAB_CD4[cd4_order == 1, ]
+tblLAB_CD4[, c("cd4_daily", "cd4_order") := NULL]
+```
+
+## Count and order of CD4 results
+
+Lab count and order were then calculated  
+
+```{r include=FALSE}
+tblLAB_CD4 = tblLAB_CD4[, .(patient, program, cd4_d, cd4_v, cd4_u)]
+
+# keep unique rows
+# nrow(tblLAB_CD4) - nrow(unique(tblLAB_CD4))
+# tblLAB_CD4 = unique(tblLAB_CD4)
+
+setorder(tblLAB_CD4, patient, cd4_d)
+tblLAB_CD4[, cd4_count := .N, by = patient]
+tblLAB_CD4[, cd4_order := 1:.N, by = patient]
+
+# frq(tblLAB_CD4$rna_count)
+# frq(tblLAB_CD4$cd4_order)
+```
+
+## Patients without any lab
+
+```{r include=FALSE}
+# patients with any art
+include = unique(tblLAB_CD4[, .(patient)])
+
+# anti join - so patients without any art here
+no_cd4 = setDT(tblBAS)[!include, on = "patient"]
+```
+
+There are `r number(nrow(no_cd4), big.mark = ",")` patients from all combined cohorts *without any CD4 record*. 
+
+```{r include=FALSE}
+rm(include, no_cd4); gc()
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Saving data 
+
+## Local  
+
+This state of data is preserved in `data` directory. `fst` files for R and `dta` files for Stata are saved.    
+
+```{r}
+write_fst(tblBAS, "data_temp/tblBAS_v003.fst")
+# tblBAS = data.table(read_fst("data_temp/tblBAS_v003.fst"))
+
+write_fst(tblLTFU, "data_temp/tblLTFU_v003.fst")
+# tblLTFU = data.table(read_fst("data_temp/tblLTFU_v003.fst"))
+
+write_fst(tblART, "data_temp/tblART_v003.fst")
+# tblART = data.table(read_fst("data_temp/tblART_v003.fst"))
+
+write_fst(tblLAB_RNA, "data_temp/tblLAB_RNA_v003.fst")
+# tblLAB_RNA = data.table(read_fst("data_temp/tblLAB_RNA_v003.fst"))
+
+write_fst(tblLAB_CD4, "data_temp/tblLAB_CD4_v003.fst")
+# tblLAB_CD4 = data.table(read_fst("data_temp/tblLAB_CD4_v003.fst"))
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Content & missings
+
+## `tblBAS`
+
+```{r echo=FALSE}
+skimr::skim(tblBAS[,.SD, .SDcols = !c("age_cat1", "age_cat2")])
+```
+
+## `tblLAB_CD4`
+
+```{r echo=FALSE}
+skimr::skim(tblLAB_CD4)
+```
+
+## `tblLAB_RNA`
+
+```{r echo=FALSE}
+skimr::skim(tblLAB_RNA)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report::report(sessionInfo())
+```
+
+<!-- ----------------------------------------------------- -->
+

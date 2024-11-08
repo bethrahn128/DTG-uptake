@@ -1,0 +1,977 @@
+---
+title: "IeDEA SA256 DTG uptake: 02 Abstract Outcomes Fig 1"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer, survMisc)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+library(patchwork)
+
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+```{r}
+
+#####################################################################
+# to adjust decimal places of categorical variables
+
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f %%)", FREQ, PCT))))
+}
+
+#####################################################################
+
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v1a.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r include=FALSE}
+tblBAS_1 = data.table(read_fst("data_temp/tblBAS_initiation_v2_outcome.fst"))
+
+tblBAS_1$ctry <- factor(tblBAS_1$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+```
+
+
+```{r include=FALSE}
+tblBAS_2 = data.table(read_fst("data_temp/tblBAS_transition_v2_outcome.fst"))
+
+```
+
+```{r}
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Overview
+
+**For adults aged 20-39 years only!!**
+
+```{r}
+#only keep adults aged 20-39 years
+tblBAS_1 <- tblBAS_1 %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)")
+tblBAS_2 <- tblBAS_2 %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)")
+```
+
+
+## Initiation cohort
+
+```{r}
+
+frq(tblBAS_1, sex)
+
+temp1 <- tblBAS_1 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp1 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+## Transition cohort
+
+```{r}
+frq(tblBAS_2, sex)
+
+
+temp2 <- tblBAS_2 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp2 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+```{r echo=FALSE}
+table1::label(tblBAS_1$sex) <- "Sex"
+table1::label(tblBAS_1$age_cat3) <- "Age group"
+table1::label(tblBAS_1$dtg_first_txt) <- "ART at initiation"
+table1::label(tblBAS_1$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_1$program) <- "Program"
+table1::label(tblBAS_1$ctry) <- "Country"
+table1::label(tblBAS_1$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3_txt) <- "Sex & age group"
+
+```
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+table1::label(tblBAS_2$dtg_switch_txt) <- "DTG switch"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+table1::label(tblBAS_2$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3_txt) <- "Sex & age group"
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Initiation Cohort: Outcomes
+
+```{r eval=FALSE, include=FALSE}
+
+frq(tblBAS_1, dtg_first)
+
+tblBAS_1[, start_fu := recart_d] 
+tblBAS_1[, end_fu := rev_outcome_d] 
+
+tblBAS_1[, FU_day := as.numeric(end_fu - start_fu)]
+tblBAS_1[, FU_month := round(as.numeric(end_fu - start_fu) / (365.25 / 12), 1)]
+tblBAS_1[, FU_year := round(as.numeric(end_fu - start_fu) / (365.25), 1)]
+
+tblBAS_1[, time := FU_day]
+
+```
+
+
+```{r}
+table1::label(tblBAS_1$sex) <- "Sex"
+table1::label(tblBAS_1$age_cat3) <- "Age group"
+
+table1::label(tblBAS_1$rev_outcome) <- "Outcome"
+table1::label(tblBAS_1$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_1$program) <- "Program"
+table1::label(tblBAS_1$ctry) <- "Country"
+
+```
+
+
+```{r}
+FU_time_1 <- tblBAS_1 %>% 
+  select(patient, program, country, ctry, dtg_recomend_d, dtg, dtg_final, dtg_first, dtg_first_txt, max_close_d, rev_outcome, rev_outcome_d, start_fu, end_fu, time) %>%
+  mutate(start_min_d = min(start_fu)) %>% # finds min start date across all cohorts (=dtg adoption date)
+  mutate(time_t2 = as.numeric(end_fu) - as.numeric(start_min_d)) %>% # gives end time relative to earliest start min date (=earliest dtg adoption date)
+  mutate(dtg_recomend_t = as.numeric(dtg_recomend_d) - as.numeric(start_min_d)) %>% # gives dtg adoption date relative to earliest dtg adoption date
+  mutate(dtg_comp_b = ifelse(rev_outcome == "RIC", 0, 1))
+
+# create file of dtg_recomend_t
+dtg_recomend_t <- FU_time_1 %>% select(program, country, ctry, dtg_recomend_d, dtg_recomend_t) %>% unique()
+
+#dtg_LSO <- dtg_recomend_t %>% filter(country =="LSO")
+#dtg_MWI <- dtg_recomend_t %>% filter(country =="MWI")
+#dtg_MOZ <- dtg_recomend_t %>% filter(country =="MOZ")
+#dtg_ZAF <- dtg_recomend_t %>% filter(country =="ZAF")
+#dtg_ZMB <- dtg_recomend_t %>% filter(country =="ZMB")
+#dtg_ZWE <- dtg_recomend_t %>% filter(country =="ZWE")
+
+
+```
+
+```{r include=FALSE}
+ # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  
+frq(FU_time_1, rev_outcome)
+
+
+FU_time_1 <- FU_time_1 %>% 
+  mutate(
+    
+dtg_first_txt_crr1b = case_when(
+    rev_outcome == "RIC" ~ 0, # still alive RIC (retained in care)
+    rev_outcome == "Death" ~ 1, # outcome Death
+    rev_outcome == "Transfer" ~ 2, # outcome Transfer
+    rev_outcome == "LTFU" ~ 3), # outcome LTFU
+)
+
+# factor alphabetically, so can determine plot output order of events (_crr1b.factor)
+FU_time_1$dtg_first_txt_crr1b.factor <- factor(FU_time_1$dtg_first_txt_crr1b, 
+levels=c("0", "1", "2", "3"),
+labels = c("a", "b", "c", "d"))
+
+```
+
+
+```{r include=FALSE}
+# create two subcohorts: intitated DTG & did not initiate DTG
+frq(FU_time_1, dtg_final)
+frq(FU_time_1, rev_outcome)
+
+FU_time_1_DTG <- FU_time_1 %>% filter(dtg_first == 1)
+FU_time_1_noDTG <- FU_time_1 %>% filter(dtg_first == 0)
+
+```
+
+
+## All adults 20-39 years
+
+Initiated DTG ART
+
+```{r echo=FALSE}
+
+## by country with DTG
+sjPlot::tab_xtab(FU_time_1_DTG$ctry,
+                 FU_time_1_DTG$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+
+```
+
+Initiated other ART
+
+
+```{r echo=FALSE}
+
+## by country with no DTG
+sjPlot::tab_xtab(FU_time_1_noDTG$ctry,
+                 FU_time_1_noDTG$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Plots for initiation cohort
+
+## Initiated DTG ART by country
+
+Cumulative incidence plot of outcomes among adults initiating DTG ART.
+
+```{r}
+
+## Need to fix issue with LSO, ZAF, MOZ not having anyone intiating DTG early...
+testLSO <- FU_time_1_DTG %>% filter(country =="LSO") %>% filter(rev_outcome == "RIC")
+testZAF <- FU_time_1_DTG %>% filter(country =="ZAF") %>% filter(rev_outcome == "RIC")
+testMOZ <- FU_time_1_DTG %>% filter(country =="MOZ") %>% filter(rev_outcome == "RIC")
+testMWI <- FU_time_1_DTG %>% filter(country =="MWI") %>% filter(rev_outcome == "RIC")
+testZMB <- FU_time_1_DTG %>% filter(country =="ZMB") %>% filter(rev_outcome == "RIC")
+testZWE <- FU_time_1_DTG %>% filter(country =="ZWE") %>% filter(rev_outcome == "RIC")
+
+```
+
+```{r}
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="SMLM2152", 124, time_t2))
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="HLHL000134", 458, time_t2))
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="SMMA5231", 305, time_t2))
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="LH10037287", 185, time_t2))
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="I_SA_CIDRZ_000203-05", 1, time_t2))
+FU_time_1_DTG <- FU_time_1_DTG %>% mutate(time_t2 = ifelse(patient =="SMZC13476", 305, time_t2))
+```
+
+
+```{r}
+ rm(testLSO, testMOZ, testMWI, testZAF, testZMB, testZWE)
+```
+
+
+```{r include=FALSE}
+
+fit1_dtg1_ctry <- survfit2(Surv(time_t2, dtg_comp_b) ~ ctry, data = FU_time_1_DTG, etype = dtg_first_txt_crr1b.factor)
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 1)
+
+ggcompetingrisks(fit = fit1_dtg1_ctry) + 
+ facet_wrap(~strata, ncol = 1) +
+  geom_vline(data = FU_time_1_DTG, aes(xintercept = dtg_recomend_t),linetype="dashed", size = 0.5) 
+  
+
+  #geom_vline(xintercept = c(123, 184) ,linetype="dashed", size = 0.5) +
+  #annotate("text", x=123, y=0.8, label="Leotho", angle=90, size = 4, hjust = 0.9, vjust = 0.9) +
+  #annotate("text", x=184, y=0.8, label="Malawi", angle=90, size = 4, hjust = 0.9, vjust = 0.9)
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 3)
+```
+
+
+```{r}
+
+p05 <-ggcompetingrisks(fit = fit1_dtg1_ctry,
+                 xlab = "", 
+                  ylab = "Cumulative incidence (%)",
+                 title = "") +
+              #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643), 
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 1, labeller = labeller(strata = 
+      c("ctry=Lesotho" = "Lesotho",
+         "ctry=Malawi" = "Malawi", 
+        "ctry=Mozambique" = "Mozambique", 
+        "ctry=South Africa" = "South Africa",
+        "ctry=Zambia" = "Zambia", 
+         "ctry=Zimbabwe" = "Zimbabwe"
+))) 
+
+#p05
+
+plot1_dtg1_ctry <- p05 + theme(
+          plot.title = element_text(size = 10, hjust = 0.5), #center title
+          plot.subtitle = element_text(size = 10, hjust = 0.5), #center subtitle
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 11), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 11), #pad x axis label
+          axis.text.x = element_text(size = 11, angle=90,vjust = 0.6, hjust = 0.5),
+          axis.text.y = element_text(size = 11),
+          legend.text = element_text(size = 11),
+          legend.title = element_text(size = 11),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"),
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 12)
+          ) +
+  guides(color = guide_legend(ncol = 2))  +
+    scale_y_continuous(breaks = c(0, 0.25,  0.50, 0.75, 1.0), 
+                        labels = c("0%", "25%", "50%", "75%", "100%")) 
+
+plot1_dtg1_ctry
+
+ggsave("output/Abstract_outcomes/Fig1_cohort1_dtg1_outcomes_ctry_calendar.png", width = 5, height =12)
+```
+
+```{r eval=FALSE, include=FALSE}
++
+  geom_vline(data = dtg_recomend_t, aes(xintercept = dtg_recomend_t),linetype="dashed")  +
+  annotate("text", x=123, y=0.8, label="Leotho", angle=90, size = 4, hjust = 0.9, vjust = 0.9) +
+  annotate("text", x=184, y=0.8, label="Malawi", angle=90, size = 4, hjust = 0.9, vjust = 0.9)
+```
+
+
+## Initiated non-DTG ART by country
+
+
+```{r}
+
+## Need to fix issue with LSO, ZAF, MOZ not having anyone intiating DTG early...
+testLSO <- FU_time_1_noDTG %>% filter(country =="LSO") %>% filter(rev_outcome == "RIC")
+testMWI <- FU_time_1_noDTG %>% filter(country =="MWI") %>% filter(rev_outcome == "RIC")
+testMOZ <- FU_time_1_noDTG %>% filter(country =="MOZ") %>% filter(rev_outcome == "RIC")
+testZAF <- FU_time_1_noDTG %>% filter(country =="ZAF") %>% filter(rev_outcome == "RIC")
+testZMB <- FU_time_1_noDTG %>% filter(country =="ZMB") %>% filter(rev_outcome == "RIC")
+testZWE <- FU_time_1_noDTG %>% filter(country =="ZWE") %>% filter(rev_outcome == "RIC")
+
+```
+
+```{r}
+test2 <- FU_time_1_noDTG %>% filter(country =="ZWE") 
+```
+
+
+```{r}
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="SMLM2266", 124, time_t2))
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="LH10072522", 185, time_t2))
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="SMMA4956", 305, time_t2))
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="HLHL000801", 458, time_t2))
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="I_SA_CIDRZ_000038-05", 1, time_t2))
+FU_time_1_noDTG <- FU_time_1_noDTG %>% mutate(time_t2 = ifelse(patient =="SMZC13247", 305, time_t2))
+```
+
+```{r}
+ rm(testLSO, testMOZ, testMWI, testZAF, testZMB, testZWE)
+```
+
+
+Cumulative incidence plot of outcomes among adults initiating non-DTG ART.
+
+
+```{r include=FALSE}
+
+fit1_dtg0_ctry <- survfit2(Surv(time_t2, dtg_comp_b) ~ ctry, data = FU_time_1_noDTG, etype = dtg_first_txt_crr1b.factor)
+
+fit1_dtg0_ctry_v2 <- survfit2(Surv(time_t2, dtg_first_txt_crr1b.factor) ~ ctry, data = FU_time_1_noDTG)
+
+ggcompetingrisks(fit = fit1_dtg0_ctry_v2) + 
+ facet_wrap(~strata, ncol = 1) +
+  geom_vline(data = FU_time_1_DTG, aes(xintercept = dtg_recomend_t),linetype="dashed", size = 0.5) +
+      scale_x_continuous(breaks = c(0, 500, 1000,1500, 2000), limits = c(0,2000), 
+    labels = c("0", "500", "1000", "1500", "2000")) 
+
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 1)
+
+ggcompetingrisks(fit = fit1_dtg0_ctry) + 
+ facet_wrap(~strata, ncol = 1) +
+  geom_vline(data = FU_time_1_DTG, aes(xintercept = dtg_recomend_t),linetype="dashed", size = 0.5) +
+      scale_x_continuous(breaks = c(0, 500, 1000,1500, 2000), limits = c(0,2000), 
+    labels = c("0", "500", "1000", "1500", "2000")) 
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 3)
+```
+
+
+```{r}
+
+p05 <-ggcompetingrisks(fit = fit1_dtg0_ctry_v2,
+                 xlab = "Years since ART initiation", 
+                  ylab = "Cumulative incidence (%)",
+                 title = "") +
+              #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),  
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 1, labeller = labeller(strata = 
+      c("ctry=Lesotho" = "Lesotho",
+         "ctry=Malawi" = "Malawi", 
+        "ctry=Mozambique" = "Mozambique", 
+        "ctry=South Africa" = "South Africa",
+        "ctry=Zambia" = "Zambia", 
+         "ctry=Zimbabwe" = "Zimbabwe"
+)))
+
+
+plot1_dtg0_ctry <- p05 + theme(
+         plot.title = element_text(size = 10, hjust = 0.5), #center title
+          plot.subtitle = element_text(size = 10, hjust = 0.5), #center subtitle
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 11), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 11), #pad x axis label
+          axis.text.x = element_text(size = 11, angle=90,vjust = 0.6, hjust = 0.5),
+          axis.text.y = element_text(size = 11),
+          legend.text = element_text(size = 11),
+          legend.title = element_text(size = 11),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"),
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 12)
+          ) +
+  guides(color = guide_legend(ncol = 2))  +
+    scale_y_continuous(breaks = c(0, 0.25,  0.50, 0.75, 1.0), 
+                        labels = c("0%", "25%", "50%", "75%", "100%")) 
+
+plot1_dtg0_ctry
+
+ggsave("output/Abstract_outcomes/Fig1_cohort1_dtg0_outcomes_ctry_calendar_v2.png", width = 5, height =12)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Transition Cohort: Outcomes
+
+```{r eval=FALSE, include=FALSE}
+
+frq(tblBAS_2, dtg_switch)
+
+tblBAS_2[, start_fu := dtg_recomend_d] 
+tblBAS_2[, end_fu := rev_outcome_d] 
+
+tblBAS_2[, FU_day := as.numeric(end_fu - start_fu)]
+tblBAS_2[, FU_month := round(as.numeric(end_fu - start_fu) / (365.25 / 12), 1)]
+tblBAS_2[, FU_year := round(as.numeric(end_fu - start_fu) / (365.25), 1)]
+
+tblBAS_2[, time := FU_day]
+
+
+```
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+
+table1::label(tblBAS_2$rev_outcome) <- "Outcome"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+
+```
+
+```{r}
+# create variables for plots showing time as calendar year; all relative to min start date across all cohorts
+
+FU_time_2 <- tblBAS_2 %>% 
+  select(patient, program, country, ctry, dtg_recomend_d, dtg, dtg_final, dtg_switch, dtg_switch_txt, rev_outcome, rev_outcome_d, start_fu, end_fu, time) %>%
+  mutate(start_min_d = min(start_fu)) %>% # finds min start date across all cohorts (=dtg adoption date)
+  mutate(time_t2 = as.numeric(end_fu) - as.numeric(start_min_d)) %>% # gives end time relative to earliest start min date (=earliest dtg adoption date)
+  mutate(dtg_recomend_t = as.numeric(dtg_recomend_d) - as.numeric(start_min_d)) %>% # gives dtg adoption date relative to earliest dtg adoption date
+  mutate(dtg_comp_b = ifelse(rev_outcome == "RIC", 0, 1))
+
+# create file of dtg_recomend_t
+dtg_recomend_t <- FU_time_2 %>% select(program, country, ctry, dtg_recomend_d, dtg_recomend_t) %>% unique()
+  
+```
+
+```{r include=FALSE}
+ # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  
+frq(FU_time_2, rev_outcome)
+
+
+FU_time_2 <- FU_time_2 %>% 
+  mutate(
+    
+dtg_switch_txt_crr1b = case_when(
+    rev_outcome == "RIC" ~ 0, # still alive RIC (retained in care)
+    rev_outcome == "Death" ~ 1, # outcome Death
+    rev_outcome == "Transfer" ~ 2, # outcome Transfer
+    rev_outcome == "LTFU" ~ 3), # outcome LTFU
+)
+
+# factor alphabetically, so can determine plot output order of events (_crr1b.factor)
+FU_time_2$dtg_switch_txt_crr1b.factor <- factor(FU_time_2$dtg_switch_txt_crr1b, 
+levels=c("0", "1", "2", "3"),
+labels = c("a", "b", "c", "d"))
+
+```
+
+
+```{r include=FALSE}
+# create two subcohorts: intitated DTG & did not initiate DTG
+frq(FU_time_2, dtg)
+frq(FU_time_2, rev_outcome)
+
+FU_time_2_DTG <- FU_time_2 %>% filter(dtg_switch == 1)
+FU_time_2_noDTG <- FU_time_2 %>% filter(dtg_switch == 0)
+
+```
+
+
+## All adults 20-39 years
+
+Switched to DTG ART
+
+```{r echo=FALSE}
+
+## by country with DTG
+sjPlot::tab_xtab(FU_time_2_DTG$ctry,
+                 FU_time_2_DTG$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+
+```
+
+Didn't switch to DTG
+
+
+```{r echo=FALSE}
+
+## by country with no DTG
+sjPlot::tab_xtab(FU_time_2_noDTG$ctry,
+                 FU_time_2_noDTG$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Plots for transition cohort
+
+## Switched to DTG ART by country
+
+
+
+```{r}
+
+## Need to fix issue with LSO, ZAF, MOZ not having anyone intiating DTG early...
+testLSO <- FU_time_2_DTG %>% filter(country =="LSO") %>% filter(rev_outcome == "RIC")
+testMOZ <- FU_time_2_DTG %>% filter(country =="MOZ") %>% filter(rev_outcome == "RIC")
+
+```
+
+```{r}
+FU_time_2_DTG <- FU_time_2_DTG %>% mutate(time_t2 = ifelse(patient =="SMLM0004", 124, time_t2))
+FU_time_2_DTG <- FU_time_2_DTG %>% mutate(time_t2 = ifelse(patient =="SMMA0042", 305, time_t2))
+
+```
+
+
+```{r}
+ rm(testLSO, testMOZ)
+```
+
+
+Cumulative incidence plot of outcomes among adults switching to DTG ART.
+
+
+```{r include=FALSE}
+
+fit2_dtg1_ctry <- survfit2(Surv(time_t2, dtg_comp_b) ~ ctry, data = FU_time_2_DTG, etype = dtg_switch_txt_crr1b.factor)
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 1)
+
+ggcompetingrisks(fit = fit2_dtg1_ctry) + 
+ facet_wrap(~strata, ncol = 1) +
+  geom_vline(data = FU_time_2_DTG, aes(xintercept = dtg_recomend_t),linetype="dashed", size = 0.5) 
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 3)
+```
+
+
+```{r}
+
+p05 <-ggcompetingrisks(fit = fit2_dtg1_ctry,
+                 xlab = "", 
+                  ylab = "Cumulative incidence (%)",
+                 title = "") +
+                       #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),  
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 1, labeller = labeller(strata = 
+      c("ctry=Lesotho" = "Lesotho",
+         "ctry=Malawi" = "Malawi", 
+        "ctry=Mozambique" = "Mozambique", 
+        "ctry=South Africa" = "South Africa",
+        "ctry=Zambia" = "Zambia", 
+         "ctry=Zimbabwe" = "Zimbabwe"
+)))
+
+
+plot2_dtg1_ctry <- p05 + theme(
+         plot.title = element_text(size = 10, hjust = 0.5), #center title
+          plot.subtitle = element_text(size = 10, hjust = 0.5), #center subtitle
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 11), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 11), #pad x axis label
+          axis.text.x = element_text(size = 11, angle=90,vjust = 0.6, hjust = 0.5),
+          axis.text.y = element_text(size = 11),
+          legend.text = element_text(size = 11),
+          legend.title = element_text(size = 11),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"),
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 12)
+          ) +
+  guides(color = guide_legend(ncol = 2))  +
+    scale_y_continuous(breaks = c(0, 0.25,  0.50, 0.75, 1.0), 
+                        labels = c("0%", "25%", "50%", "75%", "100%")) 
+  
+
+plot2_dtg1_ctry
+
+ggsave("output/Abstract_outcomes/Fig1_cohort2_dtg1_outcomes_ctry_calendar.png", width = 5, height =12)
+```
+
+
+## Didn't switch to DTG ART by country
+
+
+```{r}
+
+## Need to fix issue with LSO, ZAF, MOZ not having anyone intiating DTG early...
+testLSO <- FU_time_2_noDTG %>% filter(country =="LSO") %>% filter(rev_outcome == "RIC")
+
+
+```
+
+```{r}
+FU_time_2_noDTG <- FU_time_2_noDTG %>% mutate(time_t2 = ifelse(patient =="SMLM0074", 123, time_t2))
+
+```
+
+```{r}
+rm(testLSO)
+```
+
+
+Cumulative incidence plot of outcomes among adults not switching to DTG ART.
+
+
+```{r include=FALSE}
+
+fit2_dtg0_ctry <- survfit2(Surv(time_t2, dtg_comp_b) ~ ctry, data = FU_time_2_noDTG, etype = dtg_switch_txt_crr1b.factor)
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 1)
+
+ggcompetingrisks(fit = fit2_dtg0_ctry) + 
+ facet_wrap(~strata, ncol = 1) +
+  geom_vline(data = FU_time_2_noDTG, aes(xintercept = dtg_recomend_t),linetype="dashed", size = 0.5) 
+
+#ggcompetingrisks(fit = fit1_ctry_dtg) + 
+ #facet_wrap(~strata, ncol = 3)
+```
+
+
+```{r}
+
+p05 <-ggcompetingrisks(fit = fit2_dtg0_ctry,
+                 xlab = "", 
+                  ylab = "Cumulative incidence (%)",
+                 title = "") +
+                  #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643), 
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+  theme_ggsurvfit_default() +
+ scale_fill_manual("",
+  values = c("#9ef0f0", "gray", "#08bdba",  "purple","#0f62fe"), 
+  labels = c("RIC", "Death", "Transfer","LTFU"),  
+  name = "Outcome event") +
+ facet_wrap(~strata, ncol = 1, labeller = labeller(strata = 
+      c("ctry=Lesotho" = "Lesotho",
+         "ctry=Malawi" = "Malawi", 
+        "ctry=Mozambique" = "Mozambique", 
+        "ctry=South Africa" = "South Africa",
+        "ctry=Zambia" = "Zambia", 
+         "ctry=Zimbabwe" = "Zimbabwe"
+)))
+
+
+plot2_dtg0_ctry <- p05 + theme(
+         plot.title = element_text(size = 10, hjust = 0.5), #center title
+          plot.subtitle = element_text(size = 10, hjust = 0.5), #center subtitle
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 11), #pad y axis label
+          axis.title.x = element_text(margin = margin(t = 10, r = 0, b = 0, l = 0), size = 11), #pad x axis label
+          axis.text.x = element_text(size = 11, angle=90,vjust = 0.6, hjust = 0.5),
+          axis.text.y = element_text(size = 11),
+          legend.text = element_text(size = 11),
+          legend.title = element_text(size = 11),
+          legend.position = "right", 
+          legend.justification = "left",
+          legend.box.background = element_rect(color = "black"),
+          legend.direction="vertical", 
+          legend.margin=margin(0,0,0,0),
+          legend.box.margin = margin(-5, -5, -5, -5), 
+          legend.key.size = unit(0.7, "cm"),
+          #strip.background = element_blank(),
+          strip.text.x = element_text(size = 12)
+          ) +
+  guides(color = guide_legend(ncol = 2))  +
+    scale_y_continuous(breaks = c(0, 0.25,  0.50, 0.75, 1.0), 
+                        labels = c("0%", "25%", "50%", "75%", "100%")) 
+
+plot2_dtg0_ctry
+
+ggsave("output/Abstract_outcomes/Fig1_cohort2_dtg0_outcomes_ctry_calendar.png", width = 5, height =12)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Combine plots
+
+## Initiation cohort
+
+### Using patchwork (with title)
+
+
+```{r echo=FALSE}
+
+
+FigA <- (plot1_dtg1_ctry + plot1_dtg0_ctry + plot_layout(ncol = 2, width =c(9,9))) + plot_layout(guides = "collect") + plot_annotation(title = '(A) Initiating dolutegravir        (B) Not initiating dolutegravir', 
+                  caption = '',
+                  theme=theme(plot.title=element_text(hjust=0, size = 14))) & theme(legend.position = "right", legend.justification = "center")
+
+FigA
+  
+  
+
+#plot1_dtg1_ctry
+
+#plot1_dtg0_ctry
+
+ggsave("output/Abstract_outcomes/A_Fig1_cohort1_ctry_sex20-39_calendar.png", width = 6, height =8)
+
+```
+
+
+## Transition cohort
+
+### Using patchwork (with title)
+
+
+```{r echo=FALSE}
+
+
+FigB <- (plot2_dtg1_ctry + plot2_dtg0_ctry + plot_layout(ncol = 2, width =c(9,9))) + plot_layout(guides = "collect") + plot_annotation(title = '(A) Switching to dolutegravir   (B) Not switching to dolutegravir', 
+                  caption = '',
+                  theme=theme(plot.title=element_text(hjust=0, size = 14))) & theme(legend.position = "right", legend.justification = "center")
+
+FigB
+  
+  
+
+#plot1_dtg1_ctry
+
+#plot1_dtg0_ctry
+
+ggsave("output/Abstract_outcomes/B_Fig1_cohort2_ctry_sex20-39_calendar.png", width = 6, height =8)
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

@@ -1,0 +1,2077 @@
+---
+title: "SA256 DTG uptake <br> IWHOD2024_Poster_Fig1"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer, survMisc)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+library(patchwork)
+library(ggplot2)
+library(cowplot)
+
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+```{r}
+
+#####################################################################
+# to adjust decimal places of categorical variables
+
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f %%)", FREQ, PCT))))
+}
+
+#####################################################################
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Abstract
+
+
+## Title
+
+**Trends in dolutegravir uptake by sex in Southern Africa**
+
+## Coauthors
+
+Authors (9/15 max): Elizabeth Zaniewski1,  Matthew P Fox2,3,4, Geoffrey Fatti5, 6, Guy Kayeya Muula7, Safari Mbewe8, Matthew Romo9, Renee de Waal10,, Matthias Egger1,10,11, Eliane Rohner1.
+
+## Affiliations
+
+1. Institute of Social and Preventive Medicine, Bern, Switzerland  
+2. Health Economics and Epidemiology Research Office, Department of Internal Medicine, School of Clinical Medicine, Faculty of Health Sciences, University of the Witwatersrand,
+Johannesburg, South Africa  
+3. Department of Global Health, Boston University School of Public Health, Boston, MA, USA  
+4. Department of Epidemiology, Boston University School of Public Health, Boston, MA, USA  
+5. Kheth’Impilo AIDS Free Living, Cape Town, South Africa  
+6. Division of Epidemiology and Biostatistics, Department of Global Health, Faculty of Medicine and Health Sciences, Stellenbosch University, Cape Town, South Africa  
+7. Centre for Infectious Disease Research in Zambia, PO Box 34681, Lusaka, Zambia  
+8. Kamuzu Central Hospital, Area 33, Mzimba Street, P.O. Box 106, Lilongwe, Malawi  
+9. CUNY Institute for Implementation Science in Population Health, New York, USA  
+10. Centre for Infectious Disease Epidemiology and Research, Faculty of Health Sciences, University of Cape Town, Cape Town, South Africa  
+11. Population Health Sciences, Bristol Medical School, University of Bristol, Bristol, UK  
+
+
+## Background  
+Since 2018, the World Health Organization (WHO) has recommended dolutegravir-based antiretroviral therapy (ART) for first- and second-line ART to mitigate increasing levels of pre-treatment drug resistance. The introduction of
+dolutegravir was complicated by concerns of a possible association between fetal in-utero exposure and neural tube defects. Observational studies have found sex disparities in early uptake of dolutegravir in some low- and middle- income countries; however, it is unknown if such differences exist in Southern Africa.
+
+## Methods  
+We included individual-level data from public-access HIV treatment programs participating in the International epidemiology Databases to Evaluate AIDS (IeDEA) Southern Africa between 2018-2023. We included programs that provided data for ≥24 months following national dolutegravir adoption, which occurred between 2018-2019. We analyzed two cohorts of adults aged 20-39 years: 1) an initiation cohort of treatment-naïve adults who initiated ART on or after the date of national dolutegravir adoption and 2) a switching cohort of adults who were on non-dolutegravir-based ART at the date of national dolutegravir adoption. In the initiation cohort, we calculated the percentage initiating dolutegravir-based ART by sex aggregated tri-monthly. In the switching cohort, we used the Kaplan-Meier and the Aalen-Johansen method to calculate the cumulative incidence of switching to dolutegravir-based ART by sex, with the latter method considering the competing risk events in our analysis of death, transfer out and loss to follow-up
+
+## Results  
+Our analysis included data from 254,567 adults across eight cohorts in six Southern African countries: 124,580 adults in the initiation cohort (65.4% female) and 129,987 adults in the switching cohort (74.2% female). In the switching cohort, the median time on ART at the national dolutegravir adoption date was 26.1 months (interquartile range [IQR] 10.5 to 51.3) for men and 33.5 months (IQR 13.5 to 59.2) for women. Before 2020, the proportion of men who initiated dolutegravir-based ART was higher than the proportion of women (Figure Panel A) in all countries. By 2021, sex disparities in initiation of dolutegravir-based ART were greatly reduced in all countries except South Africa, where such differences persisted until 2022. Across the region, switching to dolutegravir-based ART generally occurred months later than initiating individuals on dolutegravir-based ART; however, sex disparities followed a similar pattern with initial uptake greater among men than women (Figure Panel B). By 2023, the cumulative incidence of switching to dolutegravir, considering competing risks events, was above 50% in all countries, with no or only small differences in uptake between men and women. In South Africa, over 15% of adults who continued receiving care (without encountering any competing risk events) through the end of 2022 had not switched to dolutegravir, whereas in all other countries it was below 5%.
+
+## Conclusion  
+Early sex disparities in initiating and switching to dolutegravir-based ART existed in different Southern African countries with uptake initially greater among men than women. However, these differences declined over the years, becoming negligible across most countries in the region by 2021.
+
+<!-- ----------------------------------------------------- -->
+
+
+# Load wrangled data: Initiating
+
+
+```{r include=FALSE}
+tblBAS_1 = data.table(read_fst("data_temp/tblBAS_cohort1_LTFU_WHO_v010.fst"))
+
+tblBAS_1$ctry <- factor(tblBAS_1$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+```
+
+
+
+```{r include=FALSE}
+
+# Create sex and age categories
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                )))))))))
+
+```
+
+
+
+```{r echo=FALSE}
+table1::label(tblBAS_1$sex) <- "Sex"
+table1::label(tblBAS_1$age_cat3) <- "Age group"
+table1::label(tblBAS_1$dtg_first_txt) <- "ART at initiation"
+table1::label(tblBAS_1$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_1$program) <- "Program"
+table1::label(tblBAS_1$ctry) <- "Country"
+table1::label(tblBAS_1$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3_txt) <- "Sex & age group"
+
+```
+
+
+
+```{r include=FALSE}
+tblBAS_2 = data.table(read_fst("data_temp/tblBAS_cohort2_LTFU_WHO_v011.fst")) 
+
+```
+
+
+```{r}
+                                     
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+```
+
+
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+table1::label(tblBAS_2$dtg_switch_txt) <- "DTG switch"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+table1::label(tblBAS_2$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3_txt) <- "Sex & age group"
+```
+
+
+## Adults aged 20-39 years only
+
+Initiation cohort
+
+```{r}
+temp_tblBAS_1 <- tblBAS_1 %>% filter(!program =="NEWLANDS") %>% mutate(age2030 = ifelse(age_cat3 == "[20,30)" | age_cat3 =="[30,40)", 1, 0)) %>% mutate(age2030_txt = ifelse(age2030 == 1, "aged 20-39", "aged 40+"))
+frq(temp_tblBAS_1, age2030_txt)
+```
+
+
+
+```{r}
+sjPlot::tab_xtab(temp_tblBAS_1$program,
+                 temp_tblBAS_1$age2030_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+Switching cohort
+
+```{r}
+temp_tblBAS_2 <- tblBAS_2 %>% filter(!program =="NEWLANDS") %>% mutate(age2030 = ifelse(age_cat3 == "[20,30)" | age_cat3 =="[30,40)", 1, 0)) %>% mutate(age2030_txt = ifelse(age2030 == 1, "aged 20-39", "aged 40+"))
+frq(temp_tblBAS_2, age2030_txt)
+```
+
+
+```{r}
+sjPlot::tab_xtab(temp_tblBAS_2$program,
+                 temp_tblBAS_2$age2030_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+tblBAS_1 <- tblBAS_1 %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>% filter(!program =="NEWLANDS") 
+
+```
+
+
+Creating variable for total number of patients per country
+
+Initiation cohort
+
+```{r}
+frq(tblBAS_1, ctry)
+```
+
+```{r}
+my_comma <- scales::label_comma(accuracy = 1, big.mark = ",")
+
+PatperCtry_1 <- tblBAS_1 %>% 
+  group_by(ctry) %>%
+  summarise("NperCtry"=n()) %>%
+  mutate(NperCtry2 = my_comma(NperCtry)) %>%
+  mutate(text1 = " (n=") %>%
+  mutate(text2 = ")") %>%
+  mutate(NCtry = paste(ctry, "\n", text1, NperCtry2, text2, sep= "")) %>%
+  select(ctry, NCtry) 
+
+tblBAS_1 <- merge(tblBAS_1, PatperCtry_1, by = "ctry", 
+           all.x = TRUE, all.y = FALSE) 
+
+```
+
+
+
+```{r}
+
+frq(tblBAS_1, sex)
+
+temp1 <- tblBAS_1 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+  filter(!program =="NEWLANDS") %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp1 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Overview by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Initiating "Other ART" vs "DTG ART".
+
+by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$sex_age3_txt,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Load wrangled data: Switching
+
+
+```{r include=FALSE}
+tblBAS_2 = data.table(read_fst("data_temp/tblBAS_cohort2_LTFU_WHO_v011.fst")) 
+
+```
+
+
+```{r}
+                                     
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+```
+
+
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+table1::label(tblBAS_2$dtg_switch_txt) <- "DTG switch"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+table1::label(tblBAS_2$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3_txt) <- "Sex & age group"
+```
+
+
+## Adults aged 20-39 years only
+
+```{r}
+#only keep adults aged 20-39 years
+tblBAS_2 <- tblBAS_2 %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>% filter(!program =="NEWLANDS") 
+
+```
+
+Creating variable for total number of patients per country
+
+Switching cohort
+
+```{r}
+frq(tblBAS_2, ctry)
+```
+
+```{r}
+my_comma <- scales::label_comma(accuracy = 1, big.mark = ",")
+
+PatperCtry_2 <- tblBAS_2 %>% 
+  group_by(ctry) %>%
+  summarise("NperCtry"=n()) %>%
+  mutate(NperCtry2 = my_comma(NperCtry)) %>%
+  mutate(text1 = " (n=") %>%
+  mutate(text2 = ")") %>%
+  mutate(NCtry = paste(ctry, "\n", text1, NperCtry2, text2, sep= "")) %>%
+  select(ctry, NCtry) 
+
+tblBAS_2 <- merge(tblBAS_2, PatperCtry_2, by = "ctry", 
+           all.x = TRUE, all.y = FALSE) 
+
+```
+
+
+
+
+```{r}
+frq(tblBAS_2, sex)
+
+
+temp2 <- tblBAS_2 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+   filter(!program =="NEWLANDS") %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp2 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+```{r echo=FALSE}
+tblBAS_2 %>%
+  ggplot(aes(x = rev_outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Overview by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$program,
+                 tblBAS_2$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Median time on ART
+
+
+```{r}
+
+tblBAS_2b <- tblBAS_2 %>% mutate(timeonART_d = as.numeric(dtg_recomend_d - recart_d)) %>%
+  mutate(timeonART_m = timeonART_d/30.5) 
+  
+
+timeonART_ctry_sex <- tblBAS_2b %>% 
+  group_by(ctry, sex) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+   summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+
+
+timeonART_sex <- tblBAS_2b %>% 
+  group_by(sex) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+  summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+  
+
+```
+
+
+
+```{r}
+timeonART_sex2 <- timeonART_sex
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+```{r}
+
+timeonART_ctry_sex2 <- timeonART_ctry_sex
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- timeonART_ctry_sex2
+knitr::kable(dset1, format = "html")
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+table1::table1(~ Median + quantile25 + quantile75 | sex , data = timeonART_sex, overall=c(left="Total"), render.categorical = my.render.cat)
+
+```
+
+
+
+## Switching to DTG
+
+Number of adults on ART switching to "DTG ART".
+
+by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$sex_age3_txt,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+test <- tblBAS_2 %>% filter(country =="ZMB" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) %>% select(patient, country, rev_outcome, rev_outcome_d, max_close_d)
+```
+
+
+```{r}
+FU_time <- tblBAS_2 %>% select(patient, country, NCtry, ctry, program, sex, 
+                    age, age_cat1, age_cat2,  age_cat3, 
+                    sex_age1, sex_age2, sex_age3, 
+                    start_fu, end_fu, FU_day, time,
+                    dtg_switch, dtg_switch_txt, 
+                    max_close_d, dtg_switch_txt, dtg_status_outcome, dtg_status_outcome_txt, 
+                     dtg_recomend_d, dtg_recomend_t, 
+                    time_t, time_t2) 
+
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+
+#https://argoshare.is.ed.ac.uk/healthyr_book/recode-the-data-1.html
+
+##########################################
+# Recode
+
+FU_time <- FU_time %>% mutate(dtg_comp = ifelse(dtg_switch ==0 & dtg_status_outcome_txt != "RIC", 1, 0))
+
+FU_time <- FU_time %>% mutate(dtg_comp_b = ifelse(dtg_switch ==0 & dtg_status_outcome_txt == "RIC", 0, 1))
+
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_comp)
+frq(FU_time, dtg_comp_b)
+
+FU_time = as.data.table(FU_time)
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_switch)  # 1 == started DTG, 0 == didn't start DTG
+frq(FU_time, dtg_comp)  # 1 == competing risk; prevented pat from being at risk to start dtg 
+
+zmb <- FU_time %>% filter(country =="ZMB")
+  frq(zmb,dtg_status_outcome)
+
+FU_time <- FU_time %>% 
+  mutate(
+    
+  # Overall survival (alive ==0,  dtg ==1)
+  dtg_switch_txt_os = case_when(
+    dtg_switch == 1 ~ 1,  #started DTG
+    dtg_switch == 0 ~ 0), #didn't start DTG
+
+  # Diease-specific survival (alive ==0, dtg ==1)
+  dtg_switch_txt_dss = case_when(
+    dtg_status_outcome == 4 ~ 0, #still alive not on dtg
+    dtg_switch == 1 ~ 1,         #started DTG
+    dtg_comp == 1 ~ 0),      # censored
+  
+   # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 4), # had other competing risk outcome Transfer
+  
+     # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr1b = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 4, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 1, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==2)
+  dtg_switch_txt_crr2 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 2, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+   
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==0)
+  dtg_switch_txt_crr3 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 0, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 0, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 0), # had other competing risk outcome Transfer
+   ) 
+
+
+# factor variables
+FU_time$dtg_switch_txt_crr.factor <- factor(FU_time$dtg_switch_txt_crr, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("No DTG", "DTG switch", "Death", "LTFU", "Transfer"))
+
+FU_time$dtg_switch_txt_crr1b.factor <- factor(FU_time$dtg_switch_txt_crr1b, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("a", "b", "c", "d", "e"))
+
+# a=RIC, no dtg, b=death, c=transfer, d=LTFU, e=switched to dtg
+
+FU_time$dtg_switch_txt_crr2.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("a", "c", "b"))
+
+FU_time$dtg_switch_txt_crr2b.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("RIC", "DTG switch", "competing risks"))
+
+FU_time$dtg_switch_txt_crr3b.factor <- factor(FU_time$dtg_switch_txt_crr3,
+levels=c("0", "1"),
+labels = c("No Switch", "DTG switch"))
+
+
+
+frq(FU_time, dtg_switch_txt_os)
+frq(FU_time, dtg_switch_txt_dss)
+frq(FU_time, dtg_switch_txt_crr)
+frq(FU_time, dtg_switch_txt_crr.factor)
+frq(FU_time, dtg_switch_txt_crr2)
+frq(FU_time, dtg_switch_txt_crr2.factor)
+frq(FU_time, dtg_switch_txt_crr2b.factor)
+frq(FU_time, dtg_switch_txt_crr3)
+frq(FU_time, dtg_switch_txt_crr3b.factor)
+
+
+zmb <- FU_time %>% filter(country =="ZMB")
+frq(zmb,dtg_status_outcome)
+  frq(zmb,dtg_status_outcome_txt)
+  frq(zmb,dtg_switch_txt_crr1b)
+   frq(zmb,dtg_switch_txt_crr1b.factor)
+   frq(zmb,dtg_switch_txt_crr2)
+    frq(zmb,dtg_switch_txt_crr2b.factor)
+   
+```
+
+```{r}
+
+FU_time <- FU_time %>% mutate(dtg_comp_b = ifelse(dtg_switch ==0 & dtg_status_outcome_txt == "RIC", 0, 1))
+
+
+FU_time = as.data.table(FU_time)
+
+
+
+FU_time <- FU_time %>% 
+  mutate(
+    
+ # Competing risks regression (alive, RIC ==0, Switched to DTG ==1, No Switch, had a competing risk event ==2)
+  dtg_switch_txt_crr2 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 2, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+)
+
+
+
+FU_time$dtg_switch_txt_crr2b.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("RIC", "DTG switch", "competing risks"))
+
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Figures: Initiating cohort
+
+## Version 1
+
+Cumulative incidence (1-KM plots) of intiating DTG by country and sex over calendar year.
+(aggregated quarterly)
+
+Adults aged 20 to 39 years at ART initiation.
+
+Using facet_wrap.
+
+
+```{r include=FALSE}
+tblBAS <- tblBAS_1 %>%
+ #filter(recart_d < "2023-08-01") %>%
+  mutate(recart_date2 = floor_date(as_date(recart_d), "month")) %>%
+  mutate(recart_date = ceiling_date(as_date(recart_d), "month")) %>%
+  mutate(recommend_date = floor_date(as_date(dtg_recomend_d), "month")) %>%
+  mutate(recommend_qtr = paste0(substring(year(dtg_recomend_d),3,4),"/0",quarter(dtg_recomend_d))) %>%
+  mutate(min_dtg_date = min(dtg_recomend_d)) %>%
+  mutate(qtr = paste0(substring(year(recart_d),3,4),"/0",quarter(recart_d))) %>%
+  mutate(sex = ifelse(sex =="Male", "Men", "Women")) %>%
+  mutate(sex = factor(sex))
+
+
+library(zoo)
+
+tblBAS <- tblBAS %>%
+  mutate(recart_d_qtr = as.Date(as.yearqtr(qtr, format = "%y/%q"), frac =1)) %>%
+  mutate(recommend_d_qtr = as.Date(as.yearqtr(recommend_qtr, format = "%y/%q"), frac =1)) 
+
+frq(tblBAS, recart_date)
+
+frq(tblBAS, qtr)
+
+frq(tblBAS, recart_d_qtr)
+
+frq(tblBAS, recommend_d_qtr) 
+
+leso <- tblBAS %>% select(country, patient, recart_d, recart_date, recart_date2, dtg_recomend_d, recommend_date, recommend_qtr, min_dtg_date, qtr, sex, NCtry)  %>%
+  filter(country == "LSO")
+
+
+frq(tblBAS, recart_date)
+
+#frq(tblBAS, ctry)
+
+#frq(tblBAS, age_cat2)
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(NCtry, ctry, country, sex, qtr, recart_d_qtr, recommend_d_qtr,dtg_recomend_d, recommend_date,  min_dtg_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+
+
+dtg2 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(NCtry, ctry, country, sex, qtr, recart_d_qtr, recommend_d_qtr, dtg_recomend_d, recommend_date, min_dtg_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+data$data <- factor(data$sex, levels = c( "Male", "Female"),
+                       labels = c("Men","Women" ))
+
+
+fill <- c( "darkblue", "#56B4E9")
+
+ 
+## stacked bar chart with legend on side 
+
+data_temp <- data %>% filter(outcome =="DTG ART")
+ 
+
+plotA_all <- ggplot(data_temp, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=12),
+        axis.title.x = element_text(size=12),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=12, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="Percentage initiating dolutegravir (%)") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle("(A) Initiating ART with dolutegravir") +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  facet_wrap(vars(NCtry), nrow=5) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+#plotA_all
+
+#ggsave("output/Poster/DTG_initiation_by_ctry_sex_20-39_by_month.png", width = 7, height =8)  
+
+```
+
+```{r  echo=FALSE, fig.height=6, fig.width=6}
+plotA_all
+```
+
+## Version 2
+
+Panel A) Cumulative incidence (1-KM plots) of intiating DTG by country and sex over calendar year. (aggregated quarterly)
+
+Adults aged 20 to 39 years at ART initiation.
+
+```{r include=FALSE}
+
+
+#data_temp <- data %>% filter(outcome =="DTG ART")
+
+
+###############################
+#plotA_LSO
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="LSO") %>%
+  mutate(recommend_date2 = recommend_d_qtr)
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra) 
+
+# create final file
+#data_temp2 <- rbind(data_temp, extra, extra2) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+
+plotA_LSO <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9), #pad x axis label,
+        axis.title.x = element_blank(), 
+        axis.text.y = element_text(size=13),
+        axis.text.x = element_blank()) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_LSO
+
+###############################
+#plotA_MWI
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="MWI") %>%
+  mutate(recommend_date2 = recommend_d_qtr) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra) 
+
+plotA_MWI <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9),
+        axis.title.x = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_MWI
+
+
+###############################
+#plotA_MOZ
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="MOZ") %>%
+  mutate(recommend_date2 = recommend_d_qtr) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra) 
+ 
+
+plotA_MOZ <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9),
+        axis.title.x = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_blank()) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_MOZ
+
+
+
+###############################
+#plotA_ZAF
+
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="ZAF") %>%
+  mutate(recommend_date2 = recommend_d_qtr) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra)
+
+plotA_ZAF <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9),
+        axis.title.x = element_blank(),  #pad x axis label,
+        axis.text.y = element_text(size=13),
+        axis.text.x = element_text(size=13, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_ZAF
+
+
+
+###############################
+#plotA_ZMB
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="ZMB") %>%
+  mutate(recommend_date2 = recommend_d_qtr) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra)
+
+plotA_ZMB <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+        legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9),
+        axis.title.x = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size=13, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_ZMB
+
+
+
+###############################
+#plotA_ZWE
+
+
+# extra rows to have the line start at the minimum recart_d
+extra <- data %>% ungroup %>%
+ filter(outcome =="DTG ART") %>%
+  filter(recart_d_qtr == "2018-09-30") %>%
+  mutate(value = 0)
+
+
+# select only those dates for the country and those starting DTG
+data_temp <- data %>% filter(outcome =="DTG ART" & country =="ZWE") %>%
+  mutate(recommend_date2 = recommend_d_qtr) %>% mutate(value = ifelse(recart_d_qtr == recommend_date2, 0, value))
+
+PatperCtry <- data_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+# extra rows to have the percentages dtg adoption start at zero 
+extra2 <- data_temp %>% filter(recommend_date2 ==recart_d_qtr) %>% mutate(value =0)
+
+# create final file
+data_temp2 <- rbind(data_temp, extra)
+plotA_ZWE <- ggplot(data_temp2, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+        legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=9),
+        axis.title.x = element_blank(), 
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(size=13, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle(PatperCtry$NCtry) +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_ZWE
+
+
+
+```
+
+
+Reduce space between country plots (adjust margins), and more space between Panel A and B.
+
+```{r}
+plotA_LSO <- plotA_LSO + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotA_MWI <- plotA_MWI + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotA_MOZ <- plotA_MOZ + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotA_ZAF <- plotA_ZAF + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotA_ZMB <- plotA_ZMB + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotA_ZWE <- plotA_ZWE + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+
+```
+
+Panel A
+
+```{r}
+
+# Panel A
+# Percentage (%)
+
+
+ylab1 <- "Percentage (%)"
+
+p4 <- ggplot(data.frame(l = ylab1, x = 1, y = 1)) +
+      geom_text(aes(x, y, label = l), angle = 90, size = 6) + 
+      theme_void() +
+      coord_cartesian(clip = "off")
+
+
+plotA <- p4 + ((plotA_LSO + plotA_MWI + plotA_MOZ) /  (plotA_ZAF +  plotA_ZMB + plotA_ZWE)) + plot_layout(widths = c(1.5, 25)) + plot_layout(guides = "collect") + theme(legend.position = "none") +
+  plot_annotation(title = '(A) Initiating ART with dolutegravir', 
+                  caption = '',
+theme=theme(plot.title=element_text(hjust=0, size = 18)))  & theme(legend.position = "bottom", legend.justification = "left")  
+
+plotA
+
+
+```
+
+
+
+```{r}
+
+ggsave("output/IWHOD2024_Poster/PanelA_ctry_sex20-39.png", width =6.5, height =5)
+```
+
+
+
+
+```{r eval=FALSE, include=FALSE}
+
+# Panel A_v2
+# Percentage (%)
+
+
+ylab1 <- "Percentage (%)"
+
+p4 <- ggplot(data.frame(l = ylab1, x = 1, y = 1)) +
+      geom_text(aes(x, y, label = l), angle = 90, size = 6) + 
+      theme_void() +
+      coord_cartesian(clip = "off")
+
+
+plotA_v2 <- p4 + ((plotA_LSO + plotA_MWI + plotA_MOZ) /  (plotA_ZAF +  plotA_ZMB + plotA_ZWE)) + plot_layout(widths = c(1.5, 25)) + plot_layout(guides = "collect") + theme(legend.position = "none") +
+  plot_annotation(title = '(A) Initiating ART with dolutegravir', 
+                  caption = '',
+theme=theme(plot.title=element_text(hjust=0, size = 18)))  & theme(legend.position = "none", legend.justification = "left")  
+
+plotA_v2
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+#, fig.height=6, fig.width=6, include=FALSE
+
+# Doesn't print out!
+
+plotA_row1 <- plotA_LSO + plotA_MWI + plotA_MOZ  
+plotA_row1
+
+plotA_row2 <- plotA_ZAF +  plotA_ZMB + plotA_ZWE 
+plotA_row2
+
+plotA_v1 <- plotA_row1 / plotA_row2  + plot_layout(guides = "collect")  & ylab(NULL) & theme(legend.position = "bottom", legend.justification = "left")
+
+
+plotA_v1
+
+
+plotA_v1 <- wrap_elements(plotA_v1) +
+  labs(tag = "Percentage (%)") +
+  theme(
+    plot.tag = element_text(size = rel(1), angle = 90),
+    plot.tag.position = "left"
+  )
+
+plotA_v1
+
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Figures: Switching cohort
+
+
+```{r include=FALSE}
+frq(FU_time, dtg_recomend_d)
+frq(FU_time, dtg_recomend_t)
+```
+
+
+## Version 1
+
+Cumulative incidence (1-KM plots) of switching to DTG by country and sex over calendar year.
+**taking into account aggregated competing risks**.
+
+Adults aged 20 to 39 years at national DTG adoption date.
+
+
+
+```{r include=FALSE}
+
+# prepare data for transition cohort: switching to DTG
+
+FU_time$dtg_switch_txt_crr2b.factor <- factor(FU_time$dtg_switch_txt_crr2b.factor, levels = c("RIC", "DTG switch", "competing risks"),
+labels = c("RIC",  "Switch to dolutegravir", "Competing risks"))
+
+FU_time$sex <- factor(FU_time$sex, levels = c("Male", "Female"),
+labels = c("Men",  "Women"))
+
+frq(FU_time, dtg_switch_txt_crr2b.factor)
+
+
+```
+ 
+
+
+```{r include=FALSE}
+
+
+#frq(FU_time, dtg_switch_txt_crr2b.factor)
+
+
+FU_time_temp <- FU_time %>% filter((country =="LSO") & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+frq(FU_time_temp, dtg_switch_txt_crr2b.factor)
+frq(FU_time_temp, dtg_comp_b)
+
+
+fit_LSO <- survfit2(Surv(time_t2, dtg_comp_b) ~ sex, data = FU_time_temp, etype = dtg_switch_txt_crr2b.factor)
+
+plotB_LSO <- ggcuminc(fit_LSO, outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+     #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9")) +
+  scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+      labs(
+    x = "",
+    y = "",
+        title = PatperCtry$NCtry
+  ) +
+         theme(plot.title = element_text(size = 13, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 14),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+          axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 11), #pad y axis label
+          axis.title.x = element_text(size=8), 
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 13)
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+
+
+
+# LSO
+
+FU_time_temp <- FU_time %>% filter((country =="LSO") & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+plotB_LSO <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+       ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+     #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9")) +
+  scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+      labs(
+    x = "",
+    y = "",
+        title = PatperCtry$NCtry
+  ) +
+         theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 13)
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+
+plotB_LSO
+
+
+# MWI
+
+FU_time_temp <- FU_time %>% filter(country =="MWI" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+frq(FU_time_temp, dtg_switch_txt_crr2b.factor)
+
+plotB_MWI <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+   ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+        #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9", "darkblue", "#56B4E9")) +
+   scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+      labs(
+    x = "",
+    y = "",
+        title = PatperCtry$NCtry
+  ) +
+          theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank()
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+plotB_MWI
+
+
+
+
+# MOZ
+
+FU_time_temp <- FU_time %>% filter(country =="MOZ" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+plotB_MOZ <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+   ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+         #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9", "darkblue", "#56B4E9")) +
+  scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+     labs(
+    x = "",
+    y = "",
+        title = PatperCtry$NCtry
+  ) +
+       theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank()
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+plotB_MOZ
+
+
+# ZAF
+
+FU_time_temp <- FU_time %>% filter(country =="ZAF" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+ 
+plotB_ZAF <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+    ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+         #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9", "darkblue", "#56B4E9")) +
+   scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+      labs(
+    x = "",
+    y = "",
+    title = PatperCtry$NCtry
+  ) +
+  theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 13, angle =90, vjust = 0.6, hjust = 0.5),
+        axis.text.y = element_text(size = 13)
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+plotB_ZAF
+
+#########################################
+# ZMB
+##########################################
+
+FU_time_temp <- FU_time %>% filter(country =="ZMB" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+
+
+plotB_ZMB <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+   ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+         #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643), 
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9", "darkblue", "#56B4E9")) +
+  scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+      labs(
+    x = "",
+    y = "",
+    title = PatperCtry$NCtry
+  ) +
+ theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 13, angle =90, vjust = 0.6, hjust = 0.5),
+        axis.text.y = element_blank()
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+plotB_ZMB
+
+
+# ZWE
+
+FU_time_temp <- FU_time %>% filter(country =="ZWE" & (age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+PatperCtry <- FU_time_temp %>% select(country, NCtry) %>%
+  group_by(country) %>%
+  unique()
+
+plotB_ZWE <- survfit2(Surv(time_t2, dtg_switch_txt_crr2b.factor) ~ sex, data = FU_time_temp) %>%
+  ggcuminc(outcome = c("Switch to dolutegravir", "Competing risks"), 
+           linetype_aes = FALSE, 
+           theme = theme_ggsurvfit_default(), 
+           size = 1.5) +
+    ylim(c(0, 1)) + 
+         #scale_x_continuous(breaks = c(153, 518, 883, 1248, 1613 ), limits = c(0,1613), 
+    scale_x_continuous(breaks = c(183, 548, 913, 1278, 1643 ), limits = c(0,1643),
+    labels = c("2019", "2020", "2021", "2022", "2023")) +
+    scale_color_manual(values = c( "darkblue", "#56B4E9", "darkblue", "#56B4E9")) +
+   scale_linetype_manual(values = c("Switch to dolutegravir" = "solid", "Competing risks" = "dotted"), labels = c("Switch to dolutegravir" = "Initiating or switching to dolutegravir", "Competing risks" = "Competing risks for switching to dolutegravir")) + 
+   scale_color_manual(values = c( "darkblue", "#56B4E9")) +
+   labs(
+    x = "",
+    y = "",
+    title = PatperCtry$NCtry
+  ) +
+ theme(plot.title = element_text(size = 14, hjust = 0.5, vjust =0),
+       legend.text = element_text(size = 13),
+        legend.title = element_blank(),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1), size = 9), #pad y axis label
+        axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 13, angle =90, vjust = 0.6, hjust = 0.5),
+        axis.text.y = element_blank()
+         ) +
+  guides(color = guide_legend(ncol = 1, reverse = FALSE)) +
+  geom_vline(data = FU_time_temp, aes(xintercept = dtg_recomend_t),linetype="dashed") +
+  scale_y_continuous(limits = c(0,1), n.breaks = 5, labels = function(x) paste0(x*100, "%")) 
+
+plotB_ZWE
+
+```
+
+
+With space reduce between country plots (adjust margins), and more space between Panel A and B.
+
+```{r}
+
+plotB_LSO <- plotB_LSO + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotB_MWI <- plotB_MWI + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotB_MOZ <- plotB_MOZ + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotB_ZAF <- plotB_ZAF + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotB_ZMB <- plotB_ZMB + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+plotB_ZWE <- plotB_ZWE + theme(plot.margin = margin(0, 0, 0, 0, "pt"))
+
+```
+
+
+Create Panel B
+
+
+```{r}
+
+
+ylab2 <- "Cumulative incidence (%)"
+
+p5 <- ggplot(data.frame(l = ylab2, x = 1, y = 1)) +
+      geom_text(aes(x, y, label = l), angle = 90, size = 6) + 
+      theme_void() +
+      coord_cartesian(clip = "off")
+
+
+plotB <- p5 + ((plotB_LSO + plotB_MWI + plotB_MOZ) /  (plotB_ZAF +  plotB_ZMB + plotB_ZWE)) + plot_layout(widths = c(1.5, 25)) + plot_layout(guides = "collect") + 
+  plot_annotation(title = '(B) Switching to dolutegravir', 
+                  caption = '',
+theme=theme(plot.title=element_text(hjust=0, size = 18)))  & theme(legend.position = "bottom", legend.justification = "left")  
+
+plotB
+
+```
+
+
+
+
+```{r}
+
+ggsave("output/IWHOD2024_Poster/PanelB_ctry_sex20-39.png", width =6.5, height =5) 
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Combine plots
+
+
+## Version 1: To copy/paste into poster
+
+```{r echo=FALSE, fig.height=10, fig.width=7}
+combo1 <- wrap_elements(plotA)  / wrap_elements(plotB) + plot_layout(guides = "collect") & theme(legend.position = "bottom", legend.justification = "left") 
+
+combo1
+
+ggsave("output/IWHOD2024_Poster/Combo_version1_ctry_sex20-39.png", width =6.5, height =10) 
+
+```
+
+
+
+## Version 2: combo no panel headings
+
+
+```{r}
+
+combo2 <- 
+  (plotA_LSO + plotA_MWI + plotA_MOZ) / 
+  (plotA_ZAF + plotA_ZMB + plotA_ZWE) / 
+  (plot_spacer() + plot_spacer() +plot_spacer()) /
+  (plotB_LSO + plotB_MWI + plotB_MOZ) / 
+  (plotB_ZAF + plotB_ZMB + plotB_ZWE) +
+   plot_layout(nrow = 5, widths= c(5, 5, 5), heights= c(6,6,1,6,6), guides = "collect") & theme(legend.position = "bottom", legend.justification = "left")
+
+#combo
+
+```
+
+```{r echo=FALSE, fig.height=9, fig.width=7}
+
+combo2
+
+```
+
+
+```{r}
+ggsave("output/IWHOD2024_Poster/Combo_version2_ctry_sex20-39_no_panel_txt.png", width = 8, height =11)
+```
+
+
+## Version 3: with panel headings and text
+
+with panel headings and text
+
+
+```{r eval=FALSE, include=FALSE}
+
+library(ggplot2)
+
+library(cowplot)
+
+
+
+Fig1a <- 
+  
+  (plotA_LSO + plotA_MWI + plotA_MOZ + plot_layout(ncol = 3, widths= c(6, 6, 6))) / 
+  
+  
+  (plotA_ZAF + plotA_ZMB + plotA_ZWE + plot_layout(ncol = 3, widths= c(6, 6, 6))) / 
+  
+  
+  plot_layout(guides = "collect") + 
+  plot_annotation(title = '(A) Initiating ART with dolutegravir', 
+                  caption = '',
+theme=theme(plot.title=element_text(hjust=0, size = 18))) & theme(legend.position = "bottom", legend.justification = "left")
+
+#Fig1a
+  
+
+```
+
+```{r eval=FALSE, include=FALSE}
+Fig1b <- 
+  
+  (plotB_LSO + plotB_MWI + plotB_MOZ + plot_layout(ncol = 3, widths= c(6, 6, 6))) /  
+  
+  
+  (plotB_ZAF + plotB_ZMB + plotB_ZWE + plot_layout(ncol = 3, widths= c(6, 6, 6))) / 
+  
+  plot_layout(guides = "collect") + 
+  plot_annotation(title = '(B) Switching to dolutegravir', 
+                  caption = '',
+theme=theme(plot.title=element_text(hjust=0, size = 18))) & theme(legend.position = "bottom", legend.justification = "center")
+
+#Fig1b
+
+```
+
+```{r eval=FALSE, fig.height=10, fig.width=8, include=FALSE}
+Fig1c <- wrap_elements(Fig1a) /  wrap_elements(Fig1b) + plot_layout(guides = "collect") 
+
+#Fig1c
+```
+
+
+
+```{r include=FALSE}
+
+combo3 <- ggdraw(add_sub(combo1, color = "black",  size = 12.5, vpadding = grid::unit(0.5,"lines"), x = 0, y = 0.4, hjust = 0, 
+  "Panel (A): Percentage initiating dolutegravir-based ART among those initiating \nany ART, aggregated tri-monthly over calendar year.\n\nPanel (B): Cumulative incidence of switching to dolutegravir-based ART and \ncompeting risk events for switching to dolutegravir-based ART (i.e., death, \ntransfer out and loss to follow-up) over calendar year.\n\nVertical dashed lines show the date of national dolutegravir adoption. \n                    "))
+
+
+```
+
+```{r echo=FALSE, fig.height=11, fig.width7}
+combo3
+```
+
+
+```{r}
+ggsave("output/IWHOD2024_Poster/Combo_version3_ctry_sex20-39_with_panel_txt.png", width = 6.5, height =12)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+plotA_v3 <- ggarrange(plotA_LSO, plotA_MWI, plotA_MOZ, plotA_ZAF, plotA_ZMB, plotA_ZWE, ncol =2, nrow =3, common.legend = TRUE, legend = "bottom") 
+
+plotA_v3
+
+plotB_v3 <- ggarrange(plotB_LSO, plotB_MWI, plotB_MOZ, plotB_ZAF, plotB_ZMB, plotB_ZWE, ncol =2, nrow =3, common.legend = TRUE, legend = "bottom") 
+
+plotB_v3
+
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Output of Kaplan-Meier survival at end-2022
+
+
+```{r include=FALSE}
+# Overall
+
+FU_time_temp <- FU_time %>% filter((age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+sf2 <- survfit2(Surv(time_t2, dtg_switch) ~ country + sex , data = FU_time_temp)
+
+library(broom)
+
+members <- c("time", "n.risk", "n.censor", "n.event", "strata") 
+
+#create tidy dataframe and subset by the columns saved in members
+df_sf2 <- tidy(sf2)[,members]
+head(df_sf2)
+
+df_sf2_2023 <- df_sf2 %>% filter(time >1610 & time <1645)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(df_sf2_2023)
+knitr::kable(dset1, format = "html")
+```
+
+
+
+## by country at end-2022
+
+```{r echo=TRUE}
+FU_time_temp <- FU_time %>% filter((age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry , data = FU_time_temp), times = 1643)
+```
+
+
+## by country & sex at end-2022
+
+```{r echo=TRUE}
+
+FU_time_temp <- FU_time %>% filter((age_cat3 == "[20,30)" | age_cat3 =="[30,40)")) 
+
+summary(survfit2(Surv(time_t2, dtg_switch) ~ ctry + sex , data = FU_time_temp), times = 1643)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

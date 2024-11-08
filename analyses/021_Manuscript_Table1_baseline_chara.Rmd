@@ -1,0 +1,1102 @@
+---
+title: "SA256 DTG uptake <br> Manuscript_Table1_baseline_chara"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer,scales, survMisc, psych, readxl, sjmisc, flextable)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+
+
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+library(patchwork)
+library(ggplot2)
+library(cowplot)
+library(lmtest)
+library(cowplot)
+library(tidyverse)
+library(sjmisc)
+library("forestplot")
+library("tiff")
+
+library("tidyverse") 
+library(arsenal)
+
+# Analysis
+library("MASS")
+library("logistf")
+library("car")
+library("lme4")
+library("marginaleffects")
+
+# Tables
+library("gtsummary")
+library("eeptools")
+library("kableExtra")
+
+
+library(table1)
+library(gtsummary)
+library(stats)
+library(rstatix)
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+import::from("psych", "geometric.mean")
+
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+```{r}
+
+#####################################################################
+# to adjust decimal places of categorical variables
+
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f%%)", FREQ, PCT))))
+}
+
+#####################################################################
+
+```
+
+
+```{r}
+my.render.continuous <- function(x) { 
+  c("", "Sum" = format(sum(x), big.mark = ","))
+}
+```
+
+
+```{r}
+render.median.IQR <- function(x, ...) {
+  c('', 
+    `Mean (SD)` = sprintf("%s (%s)", round(mean(x), 2), round(sd(x), 2)),
+    `Median [IQR]` = sprintf("%s [%s, %s]", median(x), 
+                             quantile(x, 0.25), quantile(x, 0.75)))
+}
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+
+**Trends in dolutegravir uptake by sex in Southern Africa**
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# Load wrangled data: Initiating
+
+
+```{r include=FALSE}
+tblBAS_1 = data.table(read_fst("data_temp/tblBAS_cohort1_LTFU_WHO_v010.fst"))
+
+tblBAS_1$ctry <- factor(tblBAS_1$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+```
+
+
+Remove non-public program
+```{r}
+tblBAS_1 <- tblBAS_1 %>% filter(!program =="NEWLANDS") 
+
+```
+
+
+Create table & variable for total number of patients per country
+
+```{r}
+frq(tblBAS_1, ctry)
+```
+
+```{r}
+my_comma <- scales::label_comma(accuracy = 1, big.mark = ",")
+
+PatperCtry_1 <- tblBAS_1 %>% 
+  group_by(ctry) %>%
+  summarise("NperCtry"=n()) %>%
+  mutate(NperCtry2 = my_comma(NperCtry)) %>%
+  mutate(text1 = " (n=") %>%
+  mutate(text2 = ")") %>%
+  mutate(NCtry = paste(ctry, "\n", text1, NperCtry2, text2, sep= "")) %>%
+  select(ctry, NCtry) 
+
+tblBAS_1 <- merge(tblBAS_1, PatperCtry_1, by = "ctry", 
+           all.x = TRUE, all.y = FALSE) 
+
+```
+
+
+
+
+```{r include=FALSE}
+
+# Create sex and age categories
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male [20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female [20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male [50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female [50,100]", "Female 50+", "other"
+                                      )))))
+
+frq(tblBAS_1, sex_age2)
+frq(tblBAS_1, sex_age2_txt)
+
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+
+```
+
+
+
+```{r echo=FALSE}
+table1::label(tblBAS_1$sex) <- "Sex"
+table1::label(tblBAS_1$age_cat3) <- "Age group"
+table1::label(tblBAS_1$dtg_first_txt) <- "ART at initiation"
+table1::label(tblBAS_1$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_1$program) <- "Program"
+table1::label(tblBAS_1$ctry) <- "Country"
+table1::label(tblBAS_1$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3_txt) <- "Sex & age group"
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+# Load wrangled data: Switching
+
+```{r include=FALSE}
+tblBAS_2 = data.table(read_fst("data_temp/tblBAS_cohort2_LTFU_WHO_v011.fst")) 
+
+```
+
+
+Remove non-public program
+```{r}
+tblBAS_2 <- tblBAS_2 %>% filter(!program =="NEWLANDS") 
+
+```
+
+
+
+Create table & variable for total number of patients per country
+
+
+```{r}
+frq(tblBAS_2, ctry)
+```
+
+```{r}
+my_comma <- scales::label_comma(accuracy = 1, big.mark = ",")
+
+PatperCtry_2 <- tblBAS_2 %>% 
+  group_by(ctry) %>%
+  summarise("NperCtry"=n()) %>%
+  mutate(NperCtry2 = my_comma(NperCtry)) %>%
+  mutate(text1 = " (n=") %>%
+  mutate(text2 = ")") %>%
+  mutate(NCtry = paste(ctry, "\n", text1, NperCtry2, text2, sep= "")) %>%
+  select(ctry, NCtry) 
+
+tblBAS_2 <- merge(tblBAS_2, PatperCtry_2, by = "ctry", 
+           all.x = TRUE, all.y = FALSE) 
+
+```
+
+
+
+
+
+```{r}
+                                     
+
+# Create sex and age categories
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male [20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female [20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male [50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female [50,100]", "Female 50+", "other"
+                                      )))))
+
+frq(tblBAS_2, sex_age2)
+frq(tblBAS_2, sex_age2_txt)
+
+tblBAS_2 <- tblBAS_2 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))))))
+```
+
+
+
+
+```{r}
+table1::label(tblBAS_2$sex) <- "Sex"
+table1::label(tblBAS_2$age_cat3) <- "Age group"
+table1::label(tblBAS_2$dtg_switch_txt) <- "DTG switch"
+table1::label(tblBAS_2$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_2$program) <- "Program"
+table1::label(tblBAS_2$ctry) <- "Country"
+table1::label(tblBAS_2$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_2$sex_age3_txt) <- "Sex & age group"
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Initiation cohort
+
+```{r}
+
+frq(tblBAS_1, sex)
+
+temp1 <- tblBAS_1 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+  filter(!program =="NEWLANDS") %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp1 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Overview by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Initiating "Other ART" vs "DTG ART".
+
+by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$sex_age3_txt,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Switching cohort
+
+```{r}
+frq(tblBAS_2, sex)
+
+
+temp2 <- tblBAS_2 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+   filter(!program =="NEWLANDS") %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp2 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+```{r echo=FALSE}
+tblBAS_2 %>%
+  ggplot(aes(x = rev_outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Overview by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$program,
+                 tblBAS_2$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Median time on ART
+
+
+```{r}
+
+tblBAS_2b <- tblBAS_2 %>% mutate(timeonART_d = as.numeric(dtg_recomend_d - recart_d)) %>%
+  mutate(timeonART_m = round(timeonART_d/30.5, 1)) 
+  
+
+timeonART_ctry_sex <- tblBAS_2b %>% 
+  group_by(ctry, sex) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+   summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+
+
+timeonART_sex <- tblBAS_2b %>% 
+  group_by(sex) %>% 
+   filter(!is.na(timeonART_m)) %>%  
+  summarise(#"quantile10"= round(quantile(timeonART_m,c(.10)),digits=1),
+            "Median"= round(quantile(timeonART_m,c(.50)),digits=1),
+            "quantile25"= round(quantile(timeonART_m,c(.25)),digits=1),
+            "quantile75"= round(quantile(timeonART_m,c(.75)),digits=1),
+            #"quantile90"= round(quantile(timeonART_m,c(.90)),digits=1),
+            #"Mean" = round(mean(timeonART_m),digits=1)
+            )
+  
+
+```
+
+
+
+```{r}
+timeonART_sex2 <- timeonART_sex
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+```{r}
+timeonART_ctry_sex2 <- timeonART_ctry_sex
+
+writeLines("td, th { padding : 6px } th { background-color : brown ; color : white; border : 1px solid white; } td { color : brown ; border : 1px solid brown }", con = "mystyle.css")
+dset1 <- head(timeonART_ctry_sex2)
+knitr::kable(dset1, format = "html")
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+table1::table1(~ Median + quantile25 + quantile75 | sex , data = timeonART_sex, overall=c(left="Total"), render.categorical = my.render.cat)
+
+```
+
+
+
+```{r}
+rm(timeonART_ctry_sex2)
+rm(timeonART_sex2)
+```
+
+
+
+## Switching to DTG
+
+Number of adults on ART switching to "DTG ART".
+
+by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_2$sex_age3_txt,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+
+sjPlot::tab_xtab(tblBAS_2$ctry,
+                 tblBAS_2$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+test <- tblBAS_2 %>% filter(country =="ZMB") %>% select(patient, country, rev_outcome, rev_outcome_d, max_close_d)
+```
+
+
+```{r}
+FU_time <- tblBAS_2 %>% select(patient, country, NCtry, ctry, program, sex, 
+                    age, age_cat1, age_cat2,  age_cat3, 
+                    sex_age1, sex_age2, sex_age2_txt, sex_age3, sex_age3_txt,
+                    start_fu, end_fu, FU_day, time,
+                    dtg_switch, dtg_switch_txt, 
+                    max_close_d, dtg_switch_txt, dtg_status_outcome, dtg_status_outcome_txt, 
+                     dtg_recomend_d, dtg_recomend_t, 
+                    time_t, time_t2) 
+
+```
+
+
+
+```{r include=FALSE}
+
+#https://argoshare.is.ed.ac.uk/healthyr_book/recode-the-data-1.html
+
+##########################################
+# Recode
+
+FU_time <- FU_time %>% mutate(dtg_comp = ifelse(dtg_switch ==0 & dtg_status_outcome_txt != "RIC", 1, 0))
+
+FU_time <- FU_time %>% mutate(dtg_comp_b = ifelse(dtg_switch ==0 & dtg_status_outcome_txt == "RIC", 0, 1))
+
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_comp)
+frq(FU_time, dtg_comp_b)
+
+FU_time = as.data.table(FU_time)
+
+frq(FU_time, dtg_status_outcome)
+frq(FU_time, dtg_status_outcome_txt)
+frq(FU_time, dtg_switch)  # 1 == started DTG, 0 == didn't start DTG
+frq(FU_time, dtg_comp)  # 1 == competing risk; prevented pat from being at risk to start dtg 
+
+zmb <- FU_time %>% filter(country =="ZMB")
+  frq(zmb,dtg_status_outcome)
+
+FU_time <- FU_time %>% 
+  mutate(
+    
+  # Overall survival (alive ==0,  dtg ==1)
+  dtg_switch_txt_os = case_when(
+    dtg_switch == 1 ~ 1,  #started DTG
+    dtg_switch == 0 ~ 0), #didn't start DTG
+
+  # Diease-specific survival (alive ==0, dtg ==1)
+  dtg_switch_txt_dss = case_when(
+    dtg_status_outcome == 4 ~ 0, #still alive not on dtg
+    dtg_switch == 1 ~ 1,         #started DTG
+    dtg_comp == 1 ~ 0),      # censored
+  
+   # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 4), # had other competing risk outcome Transfer
+  
+     # Competing risks regression (alive ==0, dtg ==1, death ==2, ltfu ==3, trans ==4)
+  dtg_switch_txt_crr1b = case_when(
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 4, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 1, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 3, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==2)
+  dtg_switch_txt_crr2 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 2, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 2, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 2), # had other competing risk outcome Transfer
+   
+
+ # Competing risks regression (alive ==0, dtg ==1, all competing risks ==0)
+  dtg_switch_txt_crr3 = case_when( 
+    dtg_status_outcome == 4 ~ 0, # still alive RIC no switch to DTG
+    dtg_status_outcome == 0 ~ 1, # switched to DTG                 
+    dtg_status_outcome == 1 ~ 0, # had other competing risk outcome Death
+    dtg_status_outcome == 2 ~ 0, # had other competing risk outcome LTFU
+    dtg_status_outcome == 3 ~ 0), # had other competing risk outcome Transfer
+   ) 
+
+
+# factor variables
+FU_time$dtg_switch_txt_crr.factor <- factor(FU_time$dtg_switch_txt_crr, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("No DTG", "DTG switch", "Death", "LTFU", "Transfer"))
+
+FU_time$dtg_switch_txt_crr1b.factor <- factor(FU_time$dtg_switch_txt_crr1b, 
+levels=c("0", "1", "2", "3", "4"),
+labels = c("a", "b", "c", "d", "e"))
+
+# a=RIC, no dtg, b=death, c=transfer, d=LTFU, e=switched to dtg
+
+FU_time$dtg_switch_txt_crr2.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("a", "c", "b"))
+
+FU_time$dtg_switch_txt_crr2b.factor <- factor(FU_time$dtg_switch_txt_crr2,
+levels=c("0", "1", "2"),
+labels = c("RIC", "DTG switch", "competing risks"))
+
+FU_time$dtg_switch_txt_crr3b.factor <- factor(FU_time$dtg_switch_txt_crr3,
+levels=c("0", "1"),
+labels = c("No Switch", "DTG switch"))
+
+
+
+frq(FU_time, dtg_switch_txt_os)
+frq(FU_time, dtg_switch_txt_dss)
+frq(FU_time, dtg_switch_txt_crr)
+frq(FU_time, dtg_switch_txt_crr.factor)
+frq(FU_time, dtg_switch_txt_crr2)
+frq(FU_time, dtg_switch_txt_crr2.factor)
+frq(FU_time, dtg_switch_txt_crr2b.factor)
+frq(FU_time, dtg_switch_txt_crr3)
+frq(FU_time, dtg_switch_txt_crr3b.factor)
+
+
+zmb <- FU_time %>% filter(country =="ZMB")
+frq(zmb,dtg_status_outcome)
+  frq(zmb,dtg_status_outcome_txt)
+  frq(zmb,dtg_switch_txt_crr1b)
+   frq(zmb,dtg_switch_txt_crr1b.factor)
+   frq(zmb,dtg_switch_txt_crr2)
+    frq(zmb,dtg_switch_txt_crr2b.factor)
+   
+```
+
+```{r}
+
+# Label and recode other variables
+FU_time <- FU_time %>%
+ mutate(sex2 = factor(sex) %>% 
+ fct_recode("1" = "Male",
+            "0" = "Female")) %>%
+  mutate(dtg.factor = factor(dtg_switch)) %>%
+  mutate(sex3 = ifelse(sex =="Male", "Men", "Women")) %>%
+  mutate(sex3.factor = factor(sex3))
+ 
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Table 1: Baseline characteristics
+
+## Re-wrangle data
+
+
+
+Country
+```{r}
+frq(tblBAS_1, ctry)
+```
+
+Sex
+```{r}
+frq(tblBAS_1, sex)
+
+
+tblBAS_1$sex.factor = factor(tblBAS_1$sex, 
+levels = c('Female', 'Male'), 
+labels = c('Women', 'Men'))
+
+frq(tblBAS_1, sex.factor)
+```
+
+
+Sex_age2_txt
+```{r}
+frq(tblBAS_1, sex_age2_txt)
+
+tblBAS_1$sex_age2.factor = factor(tblBAS_1$sex_age2, 
+levels = c('Female [20,50)', 'Female [50,100]', 'Male [20,50)', 'Male [50,100]'), 
+labels = c('Women 20-49', 'Women 50+', 'Men 20-49', 'Men 50+'))
+
+frq(tblBAS_1, sex_age2.factor)
+```
+
+
+
+Labels of variables used in Table 1
+```{r}
+
+label(tblBAS_1$ctry) <- "Country"
+label(tblBAS_1$sex.factor) <- "Sex"
+label(tblBAS_1$sex_age2.factor) <- "Sex and age in years"
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#remove column
+tblBAS_1[,patients:=NULL]
+```
+
+
+Create dummy variable
+```{r}
+tblBAS_1[, patients := "Total"]
+label(tblBAS_1$patients) <- "Total patients"
+
+```
+
+
+## Create Table 1: version 1
+
+
+```{r}
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f%%)", FREQ, PCT))))
+}
+
+```
+
+
+```{r}
+my.render.continuous <- function(x) { 
+  c("", "Sum" = format(sum(x), big.mark = ","))
+}
+```
+
+
+```{r}
+render.median.IQR_F <- function(x, ...) {
+  c('', 
+        `Median (IQR) age of women in years` = sprintf("%s (%s to %s)", median(x), 
+                             quantile(x, 0.25), quantile(x, 0.75)))
+}
+```
+
+
+```{r}
+render.median.IQR_M <- function(x, ...) {
+  c('', 
+        `Median (IQR) age of men in years` = sprintf("%s (%s to %s)", median(x), 
+                             quantile(x, 0.25), quantile(x, 0.75)))
+}
+```
+
+
+Number of patients
+```{r}
+
+mytable1_pat <- table1::table1(~  patients + sex.factor | ctry, overall=c(right="Total"), data = tblBAS_1,  render.continuous = my.render.continuous, render.categorical = my.render.cat)
+
+mytable1_1pat<- as.data.frame(mytable1_pat)
+
+```
+
+Median age females
+```{r}
+
+mytable1_ageF <- table1::table1(~  age | ctry, overall=c(right="Total"), data = tblBAS_1[sex == "Female", ],  render.continuous = render.median.IQR_F, render.categorical = my.render.cat)
+
+mytable1_2ageF <- as.data.frame(mytable1_ageF)
+```
+
+Median age males
+```{r}
+mytable1_ageM <- table1::table1(~  age | ctry, overall=c(right="Total"), data = tblBAS_1[sex == "Male", ],  render.continuous = render.median.IQR_M, render.categorical = my.render.cat)
+
+mytable1_3ageM <- as.data.frame(mytable1_ageM)
+```
+
+Number by sex and age
+```{r}
+mytable1_sexage <- table1::table1(~  sex_age2.factor | ctry, overall=c(right="Total"), data = tblBAS_1,  render.continuous = my.render.continuous, render.categorical = my.render.cat)
+
+mytable1_4sexage<- as.data.frame(mytable1_sexage)
+```
+
+Merge tables
+
+```{r}
+mytable1_1pat_b <- mytable1_1pat[-c(1,2,4),]
+mytable1_1pat_b[,1] <- c("Total","  Women", "  Men") 
+
+mytable1_2ageF_b <- mytable1_2ageF[-c(1),]
+mytable1_2ageF_b[,1] <- c("Median (IQR) age in years","  Women") 
+
+mytable1_3ageM_b <- mytable1_3ageM[-c(1,2),]
+mytable1_3ageM_b[,1] <- c("  Men") 
+
+
+mytable1_4sexage_b <- mytable1_4sexage[-c(1),]
+
+table1_final1 <- rbind(mytable1_1pat_b, mytable1_2ageF_b, mytable1_3ageM_b, mytable1_4sexage_b)
+```
+
+
+
+```{r}
+rm(list=ls(pattern="mytable"))
+```
+
+
+
+# Table 2: Baseline characteristics
+
+## Re-wrangle data
+
+
+Country
+```{r}
+frq(tblBAS_2, ctry)
+```
+
+Sex
+```{r}
+frq(tblBAS_2, sex)
+
+
+tblBAS_2$sex.factor = factor(tblBAS_2$sex, 
+levels = c('Female', 'Male'), 
+labels = c('Women', 'Men'))
+
+frq(tblBAS_2, sex.factor)
+```
+
+
+Sex_age2_txt
+```{r}
+frq(tblBAS_2, sex_age2_txt)
+
+tblBAS_2$sex_age2.factor = factor(tblBAS_2$sex_age2, 
+levels = c('Female [20,50)', 'Female [50,100]', 'Male [20,50)', 'Male [50,100]'), 
+labels = c('Women 20-49', 'Women 50+', 'Men 20-49', 'Men 50+'))
+
+frq(tblBAS_2, sex_age2.factor)
+```
+
+
+Labels of variables used in Table 2
+```{r}
+
+label(tblBAS_2$ctry) <- "Country"
+label(tblBAS_2$sex.factor) <- "Sex"
+label(tblBAS_2$sex_age2.factor) <- "Sex and age in years"
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#remove column
+tblBAS_2[,patients:=NULL]
+```
+
+
+Create dummy variable
+```{r}
+tblBAS_2[, patients := "Total"]
+label(tblBAS_2$patients) <- "Total patients"
+
+```
+
+
+
+```{r}
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f%%)", FREQ, PCT))))
+}
+
+```
+
+
+```{r}
+my.render.continuous <- function(x) { 
+  c("", "Sum" = format(sum(x), big.mark = ","))
+}
+```
+
+
+```{r}
+render.median.IQR_F <- function(x, ...) { 
+     #stats.apply.rounding(stats.default(round(x, 1)), digits=3)
+
+  c('', 
+        `Median (IQR) women` = sprintf("%s (%s to %s)", median(x), 
+                             quantile(x, 0.25), quantile(x, 0.75)))
+  
+}
+```
+
+
+```{r}
+render.median.IQR_M <- function(x, ...) {
+    # stats.apply.rounding(stats.default(round(x, 1)), digits=3)
+       c('', 
+        `Median (IQR) men` = sprintf("%s (%s to %s)", median(x), 
+                             quantile(x, 0.25), quantile(x, 0.75)))
+     }
+```
+
+
+Number of patients
+```{r}
+
+mytable2_pat <- table1::table1(~  patients + sex.factor | ctry, overall=c(right="Total"), data = tblBAS_2,  render.continuous = my.render.continuous, render.categorical = my.render.cat)
+
+mytable2_1pat<- as.data.frame(mytable2_pat)
+
+```
+
+Median age females
+```{r}
+
+mytable2_ageF <- table1::table1(~  age | ctry, overall=c(right="Total"), data = tblBAS_2[sex == "Female", ],  render.continuous = render.median.IQR_F, render.categorical = my.render.cat)
+
+mytable2_2ageF <- as.data.frame(mytable2_ageF)
+```
+
+Median age males
+```{r}
+mytable2_ageM <- table1::table1(~  age | ctry, overall=c(right="Total"), data = tblBAS_2[sex == "Male", ],  render.continuous = render.median.IQR_M, render.categorical = my.render.cat)
+
+mytable2_3ageM <- as.data.frame(mytable2_ageM)
+```
+
+Number by sex and age
+```{r}
+mytable2_sexage <- table1::table1(~  sex_age2.factor | ctry, overall=c(right="Total"), data = tblBAS_2,  render.continuous = my.render.continuous, render.categorical = my.render.cat)
+
+mytable2_4sexage<- as.data.frame(mytable2_sexage)
+```
+
+Time on ART females
+```{r}
+mytable2_timeF <- table1::table1(~  timeonART_m | ctry, overall=c(right="Total"), data = tblBAS_2b[sex == "Female", ],  render.continuous = render.median.IQR_F, render.categorical = my.render.cat)
+
+mytable2_5timeF <- as.data.frame(mytable2_timeF)
+```
+
+
+Time on ART males
+```{r}
+mytable2_timeM <- table1::table1(~  timeonART_m | ctry, overall=c(right="Total"), data = tblBAS_2b[sex == "Male", ],  render.continuous = render.median.IQR_M, render.categorical = my.render.cat)
+
+mytable2_6timeM <- as.data.frame(mytable2_timeM)
+```
+
+
+Merge tables
+
+```{r}
+mytable2_1pat_b <- mytable2_1pat[-c(1,2,4),]
+mytable2_1pat_b[,1] <- c("Total","  Women", "  Men") 
+
+mytable2_2ageF_b <- mytable2_2ageF[-c(1),]
+mytable2_2ageF_b[,1] <- c("Median (IQR) age in years","  Women") 
+
+mytable2_3ageM_b <- mytable2_3ageM[-c(1,2),]
+mytable2_3ageM_b[,1] <- c("  Men") 
+
+mytable2_4sexage_b <- mytable2_4sexage[-c(1),]
+
+mytable2_5timeF_b <- mytable2_5timeF[-c(1),]
+mytable2_5timeF_b[,1] <- c("Median (IQR) time on ART in months","  Women") 
+
+mytable2_6timeM_b <- mytable2_6timeM[-c(1,2),]
+mytable2_6timeM_b[,1] <- c("  Men") 
+
+
+
+table2_final1 <- rbind(mytable2_1pat_b, mytable2_2ageF_b, mytable2_3ageM_b, mytable2_4sexage_b,mytable2_5timeF_b, mytable2_6timeM_b)
+```
+
+
+```{r}
+rm(list=ls(pattern="mytable"))
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

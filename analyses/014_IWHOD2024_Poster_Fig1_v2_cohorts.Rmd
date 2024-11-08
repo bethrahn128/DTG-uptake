@@ -1,0 +1,730 @@
+---
+title: "SA256 DTG uptake <br> IWHOD2024_Poster_Fig1_cohorts"
+subtitle: " "
+author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "300")
+set.seed(12345)
+
+library(pacman)
+p_load(sf, tidyverse, kableExtra, report, magrittr, fst, data.table, survival, lubridate, ggsurvfit, gtsummary, tidycmprsk, Hmisc, survminer, survMisc)
+
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+#install.packages("finalfit")
+
+library(survival)
+library(lubridate)
+library(ggsurvfit)
+library(gtsummary)
+library(tidycmprsk)
+library(Hmisc)
+library(survminer)
+library(forcats)
+library(dplyr)
+#library(condsurv)
+library(patchwork)
+library(ggplot2)
+library(cowplot)
+
+
+
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE,
+                      echo = FALSE)
+
+knitr::opts_knit$set(width = 200)
+```
+
+<!-- ----------------------------------------------------- -->
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+```{r}
+
+#####################################################################
+# to adjust decimal places of categorical variables
+
+my.render.cat <- function(x) {
+  c("", sapply(stats.default(x), function(y) with(y,
+                                                  sprintf("%d (%0.0f %%)", FREQ, PCT))))
+}
+
+#####################################################################
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# National DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+dtg_recomend$ctry <- factor(dtg_recomend$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, ctry, dtg_recomend_d_initiate, dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# IWHOD 2024 Abstract
+
+
+## Title
+
+**Trends in dolutegravir uptake by sex in Southern Africa**
+
+
+<!-- ----------------------------------------------------- -->
+
+
+# Load wrangled data: Initiating
+
+
+```{r include=FALSE}
+tblBAS_1 = data.table(read_fst("data_temp/tblBAS_cohort1_LTFU_WHO_v010.fst"))
+
+tblBAS_1$ctry <- factor(tblBAS_1$country, levels = c( "LSO","MWI", "MOZ" ,"ZAF", "ZMB", "ZWE"),
+ labels = c("Lesotho",  "Malawi", "Mozambique", "South Africa", "Zambia", "Zimbabwe"))
+
+
+```
+
+
+```{r include=FALSE}
+
+# Create sex and age categories
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age2_txt = ifelse(sex_age2 =="Male.[20,50)", "Male 20-49",
+                               ifelse(sex_age2 =="Female.[20,50)", "Female 20-49",
+                                    ifelse(sex_age2 =="Male.[50,100]", "Male 50+",
+                                         ifelse(sex_age2 =="Female.[50,100]", "Female 50+", "other"
+                                      )))))
+
+tblBAS_1 <- tblBAS_1 %>%
+  mutate(sex_age3_txt = ifelse(sex_age3 =="Male.[20,30)", "Male 20-29",
+                               ifelse(sex_age3 =="Female.[20,30)", "Female 20-29",
+                                ifelse(sex_age3 =="Male.[30,40)", "Male 30-39",
+                               ifelse(sex_age3 =="Female.[30,40)", "Female 30-39",
+                              ifelse(sex_age3 =="Male.[40,50)", "Male 40-49",
+                               ifelse(sex_age3 =="Female.[40,50)", "Female 40-49",
+                                ifelse(sex_age3 =="Male.[50,100]", "Male 50+",
+                                ifelse(sex_age3 =="Female.[50,100]", "Female 50+", "other"
+                                )))))))))
+
+```
+
+
+
+```{r echo=FALSE}
+table1::label(tblBAS_1$sex) <- "Sex"
+table1::label(tblBAS_1$age_cat3) <- "Age group"
+table1::label(tblBAS_1$dtg_first_txt) <- "ART at initiation"
+table1::label(tblBAS_1$sex_age2) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3) <- "Sex & age group"
+table1::label(tblBAS_1$program) <- "Program"
+table1::label(tblBAS_1$ctry) <- "Country"
+table1::label(tblBAS_1$sex_age2_txt) <- "Sex & age group"
+table1::label(tblBAS_1$sex_age3_txt) <- "Sex & age group"
+
+```
+
+
+## Adults aged 20-39 years only
+
+
+```{r include=FALSE}
+temp_tblBAS_1 <- tblBAS_1 %>% filter(!program =="NEWLANDS") %>% mutate(age2030 = ifelse(age_cat3 == "[20,30)" | age_cat3 =="[30,40)", 1, 0)) %>% mutate(age2030_txt = ifelse(age2030 == 1, "aged 20-39", "aged 40+"))
+#frq(temp_tblBAS_1, age2030_txt)
+```
+
+
+
+```{r include=FALSE}
+#All adult data
+sjPlot::tab_xtab(temp_tblBAS_1$program,
+                 temp_tblBAS_1$age2030_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+tblBAS_1 <- tblBAS_1 %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>% filter(!program =="NEWLANDS") 
+
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+#Only adults aged 20-39 years
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+
+frq(tblBAS_1, sex)
+
+temp1 <- tblBAS_1 %>% select(country, program, dtg_recomend_d, max_close_d) %>%
+  filter(!program =="NEWLANDS") %>%
+  arrange(dtg_recomend_d, country, program) %>%
+  group_by(country, program, dtg_recomend_d, max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+temp1 %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+## Overview by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$sex_age3_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Overview by program
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Initiating "Other ART" vs "DTG ART".
+
+by country
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$ctry,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+by sex & age
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$sex_age3_txt,
+                 tblBAS_1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+## Pregnancy data for South Africa
+
+
+```{r}
+tblVIS = data.table(read_fst("data_temp/tblVIS_v005_LTFU_WHO.fst"))
+```
+
+Patient data by cohort and sex
+
+```{r}
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$sex,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+```{r}
+temp_tblBAS_1 = tblBAS_1[sex =="Female", ]
+
+tblBAS_preg = merge(temp_tblBAS_1, 
+                  tblVIS[, .(patient, center, vis_d, preg_y)], 
+                  by = "patient",
+                  all.x = TRUE, all.y = FALSE)
+
+```
+
+
+
+```{r include=FALSE}
+# Pregnancy data by cohort for women only
+
+label(tblBAS_preg$preg_y) <- "Pregnancy no/yes/unknown"
+
+sjPlot::tab_xtab(tblBAS_preg$program,
+                 tblBAS_preg$preg_y,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+Keep South African data for pregnancy within +/- 9 months from ART start
+
+```{r}
+
+tblBAS_preg = tblBAS_preg[country =="ZAF", ]
+
+tblBAS_preg <- tblBAS_preg %>% select(patient, sex, program, country, recart_d, dtg_first_txt, dtg_min_pat, vis_d,  preg_y)
+
+```
+
+
+```{r}
+tblBAS_preg2 <- tblBAS_preg %>% 
+  mutate(recart_vis = abs(recart_d - vis_d)) %>% 
+  mutate(recart_vis_time = ifelse(recart_vis < 281, 1, 0)) %>% 
+  filter(recart_vis_time ==1 & preg_y ==1) %>%
+  filter(sex =="Female") %>%
+  mutate(preg = 1) %>%
+  select(patient, preg, preg_y) %>%
+  unique()
+
+
+```
+
+
+```{r include=FALSE}
+
+
+tblBAS_1 = merge(tblBAS_1, 
+                  tblBAS_preg2[, .(patient, preg, preg_y)], 
+                  by = "patient",
+                  all.x = TRUE, all.y = FALSE)
+
+tblBAS_1 = tblBAS_1[is.na(preg), preg2 :=0]
+
+tblBAS_1 = tblBAS_1[!is.na(preg), preg2 :=1]
+
+label(tblBAS_1$preg2) <- "Pregnancy no or unknown/yes"
+
+frq(tblBAS_1, preg2)
+
+```
+
+
+
+```{r}
+# Pregnancy data 
+table1::label(tblBAS_1$preg2) <- "Known pregnancy within +/- 9months of ART start"
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+sjPlot::tab_xtab(tblBAS_1$program,
+                 tblBAS_1$preg2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+HLABISA women only
+```{r}
+temp_H <- tblBAS_1 %>% filter(program == "HLABISA")
+
+
+sjPlot::tab_xtab(temp_H$preg2,
+                 temp_H$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+```{r}
+sjPlot::tab_xtab(temp_H$dtg_first_txt,
+                 temp_H$preg2,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+Histogram
+```{r}
+temp <- temp_H %>% mutate(status = ifelse(preg2 == 1, "Known pregnancy", "No known pregnancy")) 
+
+ggplot(data = temp, aes(recart_d)) +
+  geom_histogram(aes(fill = status), position = "dodge") +
+  scale_y_sqrt() 
+```
+
+
+```{r}
+
+ggplot(data = temp, aes(recart_d)) +
+  geom_histogram(aes(fill = status), position = "dodge") +
+  facet_grid(vars(status))
+```
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Figures: Initiating cohort
+
+## All programs
+
+Cumulative incidence (1-KM plots) of intiating DTG by country and sex over calendar year.
+(aggregated quarterly)
+
+Adults aged 20 to 39 years at ART initiation.
+
+Using facet_wrap.
+
+```{r}
+
+my_comma <- scales::label_comma(accuracy = 1, big.mark = ",")
+
+PatperProg_1 <- tblBAS_1 %>% 
+  group_by(program) %>%
+  summarise("NperProg"=n()) %>%
+  mutate(NperProg2 = my_comma(NperProg)) %>%
+  mutate(text1 = " (n=") %>%
+  mutate(text2 = ")") %>%
+  mutate(NProg = paste(program, "\n", text1, NperProg2, text2, sep= "")) %>%
+  select(program, NProg) 
+
+tblBAS_1 <- merge(tblBAS_1, PatperProg_1, by = "program", 
+           all.x = TRUE, all.y = FALSE) 
+
+```
+
+
+
+
+```{r include=FALSE}
+tblBAS <- tblBAS_1 %>%
+ #filter(recart_d < "2023-08-01") %>%
+  mutate(recart_date2 = floor_date(as_date(recart_d), "month")) %>%
+  mutate(recart_date = ceiling_date(as_date(recart_d), "month")) %>%
+  mutate(recommend_date = floor_date(as_date(dtg_recomend_d), "month")) %>%
+  mutate(recommend_qtr = paste0(substring(year(dtg_recomend_d),3,4),"/0",quarter(dtg_recomend_d))) %>%
+  mutate(min_dtg_date = min(dtg_recomend_d)) %>%
+  mutate(qtr = paste0(substring(year(recart_d),3,4),"/0",quarter(recart_d))) %>%
+  mutate(sex = ifelse(sex =="Male", "Men", "Women")) %>%
+  mutate(sex = factor(sex))
+
+
+library(zoo)
+
+tblBAS <- tblBAS %>%
+  mutate(recart_d_qtr = as.Date(as.yearqtr(qtr, format = "%y/%q"), frac =1)) %>%
+  mutate(recommend_d_qtr = as.Date(as.yearqtr(recommend_qtr, format = "%y/%q"), frac =1)) 
+
+frq(tblBAS, recart_date)
+
+frq(tblBAS, qtr)
+
+frq(tblBAS, recart_d_qtr)
+
+frq(tblBAS, recommend_d_qtr) 
+
+leso <- tblBAS %>% select(country, patient, recart_d, recart_date, recart_date2, dtg_recomend_d, recommend_date, recommend_qtr, min_dtg_date, qtr, sex)  %>%
+  filter(country == "LSO")
+
+
+frq(tblBAS, recart_date)
+
+#frq(tblBAS, ctry)
+
+#frq(tblBAS, age_cat2)
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(ctry, NProg, program, country, sex, qtr, recart_d_qtr, recommend_d_qtr,dtg_recomend_d, recommend_date,  min_dtg_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+
+
+dtg2 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, NProg, program, country, sex, qtr, recart_d_qtr, recommend_d_qtr, dtg_recomend_d, recommend_date, min_dtg_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+data$data <- factor(data$sex, levels = c( "Male", "Female"),
+                       labels = c("Men","Women" ))
+
+
+fill <- c( "darkblue", "#56B4E9")
+
+ 
+## stacked bar chart with legend on side 
+
+data_temp <- data %>% filter(outcome =="DTG ART")
+ 
+
+plotA_all <- ggplot(data_temp, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0.5),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=12),
+        axis.title.x = element_text(size=12),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=12, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle("(A) Initiating ART with dolutegravir") +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  facet_wrap(vars(NProg), nrow=5) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_all
+
+ggsave("output/IWHOD2024_Poster/Cohorts/DTG_initiation_by_prog_sex_20-39_by_month.png", width = 7, height =8)  
+
+```
+
+```{r  echo=FALSE, fig.height=8, fig.width=6}
+plotA_all
+```
+
+
+## South African cohorts only
+
+```{r include=FALSE}
+tblBAS <- tblBAS_1 %>%
+ #filter(recart_d < "2023-08-01") %>%
+  mutate(recart_date2 = floor_date(as_date(recart_d), "month")) %>%
+  mutate(recart_date = ceiling_date(as_date(recart_d), "month")) %>%
+  mutate(recommend_date = floor_date(as_date(dtg_recomend_d), "month")) %>%
+  mutate(recommend_qtr = paste0(substring(year(dtg_recomend_d),3,4),"/0",quarter(dtg_recomend_d))) %>%
+  mutate(min_dtg_date = min(dtg_recomend_d)) %>%
+  mutate(qtr = paste0(substring(year(recart_d),3,4),"/0",quarter(recart_d))) %>%
+  mutate(sex = ifelse(sex =="Male", "Men", "Women")) %>%
+  mutate(sex = factor(sex)) %>%
+  filter(country == "ZAF")
+
+
+library(zoo)
+
+tblBAS <- tblBAS %>%
+  mutate(recart_d_qtr = as.Date(as.yearqtr(qtr, format = "%y/%q"), frac =1)) %>%
+  mutate(recommend_d_qtr = as.Date(as.yearqtr(recommend_qtr, format = "%y/%q"), frac =1)) 
+
+frq(tblBAS, recart_date)
+
+frq(tblBAS, qtr)
+
+frq(tblBAS, recart_d_qtr)
+
+frq(tblBAS, recommend_d_qtr) 
+
+leso <- tblBAS %>% select(country, patient, recart_d, recart_date, recart_date2, dtg_recomend_d, recommend_date, recommend_qtr, min_dtg_date, qtr, sex)  %>%
+  filter(country == "LSO")
+
+
+frq(tblBAS, recart_date)
+
+#frq(tblBAS, ctry)
+
+#frq(tblBAS, age_cat2)
+
+#tblBAS$Datetime <- as.Date(tblBAS$recart_ym)
+#DT<- data.table(tblBAS)
+#DT[,sum(dtg_first),by = Datetime]
+
+dtg1 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+  filter(recart_d <= end_date) %>%
+  group_by(ctry, NProg, program, country, sex, qtr, recart_d_qtr, recommend_d_qtr,dtg_recomend_d, recommend_date,  min_dtg_date) %>%
+  summarise(
+    numer = sum(dtg_first),
+    denom = n()) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "a") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per))   
+
+
+dtg2 <- tblBAS %>% filter(age_cat3 == "[20,30)" | age_cat3 =="[30,40)") %>%
+    filter(recart_d <= end_date) %>%
+  group_by(ctry, NProg, program, country, sex, qtr, recart_d_qtr, recommend_d_qtr, dtg_recomend_d, recommend_date, min_dtg_date) %>%
+  summarise(
+    numer_b = sum(dtg_first),
+    denom = n(),
+    numer = denom - numer_b) %>%
+  mutate(line = "dtg") %>%
+  mutate(outcome = "b") %>%
+  mutate(per = numer/denom *100) %>%
+  mutate(value = round(per, 1)) %>%
+  select(-c(per, numer_b)) 
+
+
+data <- rbind(dtg1, dtg2)
+
+
+data$outcome <- factor(data$outcome, levels = c( "a", "b"),
+                       labels = c("DTG ART","Other ART" ))
+
+data$data <- factor(data$sex, levels = c( "Male", "Female"),
+                       labels = c("Men","Women" ))
+
+
+fill <- c( "darkblue", "#56B4E9")
+
+ 
+## stacked bar chart with legend on side 
+
+data_temp <- data %>% filter(outcome =="DTG ART")
+ 
+
+plotA_all <- ggplot(data_temp, aes(x=recart_d_qtr, y=value, color=sex)) + 
+ geom_line(stat="identity", size= 1.5, linetype = 1, show.legend = TRUE) +
+  scale_fill_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill)  +
+  scale_color_manual(labels = ~ stringr::str_wrap(.x, width = 40), values = fill) +
+   theme_bw() + 
+  theme(plot.title = element_text(size = 14, hjust = 0, vjust = 0),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position="bottom", 
+        legend.justification = "center",
+        legend.box.background = element_blank(),
+        legend.box.margin = margin(t = 1, l = 1), 
+       #legend.box.background = element_rect(color = "black"),
+        legend.direction="vertical", 
+        legend.margin=margin(0,0,0,0),
+        legend.key.size = unit(0.7, "cm"),
+        strip.background = element_blank(),
+        strip.text.x = element_text(size=13),
+        axis.title.y = element_text(margin = margin(t = 1, r = 1, b = 1, l = 1),size=12),
+        axis.title.x = element_text(size=12),
+        axis.text.y = element_text(size=10),
+        axis.text.x = element_text(size=12, angle=90,vjust = 0.6, hjust = 0.5)) +
+  labs(x="", y="Percentage (%)") +
+  scale_y_continuous(n.breaks = 5, labels = function(x) paste0(x*1, "%")) +
+  #scale_x_date(breaks = "year") +
+  ggtitle("(A) Initiating ART with dolutegravir") +
+  guides(color = guide_legend(title = "", reverse=FALSE, ncol = 1)) +
+  facet_wrap(vars(NProg), nrow=1) +
+  geom_vline(data = data_temp, aes(xintercept = recommend_d_qtr),linetype="dashed") 
+
+
+plotA_all
+
+ggsave("output/IWHOD2024_Poster/Cohorts/DTG_initiation_by_prog_sex_20-39_by_month_ZAF.png", width = 6.5, height =4)  
+
+```
+
+```{r  echo=FALSE, fig.height=5, fig.width=5}
+plotA_all
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report(sessionInfo())
+```

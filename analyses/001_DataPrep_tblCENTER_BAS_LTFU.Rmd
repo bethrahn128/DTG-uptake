@@ -1,0 +1,1150 @@
+---
+title: "SA256 DTG uptake <br> tblCENTER, tblBAS, tblLTFU"
+subtitle: " "
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+import::from("psych", "geometric.mean")
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(
+  cache = FALSE,
+  prompt = FALSE,
+  tidy = FALSE,
+  comment = NA,
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+
+# IeDEA-SA Data Prep
+
+Raw Stata and `fst` files come from central directory of `IeDEA_core`.  
+
+Using release `Stata_202308_Aug`.  
+
+```{r eval=FALSE, include=FALSE}
+list.files("../IeDEA_core/data/Stata_202308_Aug/", pattern = "\\.fst$") %>%
+  kable(col.names = "Datasets - new") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = F
+  )
+```
+
+## Druglist
+
+Updated `druglist` dataset from the `ART-codes` repo.   
+
+```{r include=FALSE}
+druglist = data.table(readr::read_csv("https://raw.githubusercontent.com/IeDEA-SA/ART-codes/main/data-raw/IeDEA_druglist.csv"))[, c("drug_orig") := NULL]
+
+druglist[, drug := trimws(drug, which = "both")]
+```
+
+```{r echo=FALSE}
+druglist %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+druglist = druglist[, .(art_id, drug, arv_class)]
+```
+
+## Official DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(readxl::read_xlsx("data-raw/dtg_recomend.xlsx"))[, source1 := NULL][, source2 := NULL][, dtg_recomend_d_initiate := as.Date(dtg_recomend_d_initiate)][, dtg_recomend_d := as.Date(dtg_recomend_d_switch)]
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, dtg_recomend_d, dtg_recomend_d_initiate, dtg_recomend_d_switch) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+write_fst(dtg_recomend, "data_temp/dtg_recomend_v001.fst")
+```
+
+
+## Corrected close date
+
+Prepared by @aezaniewski and available in [IeDEA_core](https://github.com/IeDEA-SA/IeDEA_core/tree/master/Stata/Revising_close_date) repository.  
+- Note: CIDRZ has sites that are part of IeDEA and sites that are not part of IeDEA. For patients who visit a site that is part of IeDEA, CIDRZ provides all site information for that patient even if they visited sites that are not part of IeDEA. This explains why we have so many unsupported sites included in tblCENTER. CIDRZ has confirmed that we can use all data that they provide to IeDEA, regardless of whether it is from an IeDEA supported or unsupported site.
+
+### Revised close date by center
+
+Revised close dates based on provided data. Although close date for CIDRZ is 2023-02-28, but some centers in CIDRZ stop providing data at much earler dates. (Ex. 2022-01-13, 2022-06-27, 2022-09-20, etc.)  
+
+```{r}
+rev_close_d = data.table(haven::read_dta("data/tblCENTER_temp3_Sept2023.dta") %>% haven::zap_label())[, .(center, program = programme, close_d, rev_close_d = close_d_revised_final)]
+```
+
+Save file for revised close dates that taking into account differences among centers in CIDRZ and other programs.
+
+```{r echo=TRUE}
+write_fst(rev_close_d, "data_temp/rev_close_d_v001.fst")
+```
+
+### Maximum close date per program
+
+Maximum `max_close_d` for each program was created from corrected `rev_close_d` dates excluding centres marked as `to_drop`:  
+
+```{r}
+temp = setDT(rev_close_d)[, .SD[which.max(close_d)], by = program][, c("center", "rev_close_d") := NULL]
+
+program_close_d = setDT(rev_close_d)[, .SD[which.max(close_d)], by = program][, c("center", "rev_close_d") := NULL]
+
+program_close_d = merge(temp, program_close_d)
+#program_close_d[, diff := as.numeric(rev_close_d) - as.numeric(close_d)]
+ 
+setnames(program_close_d, "close_d", "max_close_d")
+```
+
+```{r echo=FALSE}
+program_close_d %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+# remove unneeded columns and tables
+rm(temp)
+rm(rev_close_d)
+```
+
+
+```{r include=FALSE}
+write_fst(program_close_d, "data_temp/program_close_d_v001.fst")
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# `tblCENTER`
+
+Table provides center level variables used for deriving urban/rural status and level of care.
+
+Centers from CIDRZ that are missing add_center_d are IeDEA unsupported sites.
+CIDRZ has confirmed that we can use data from unsupported CIDRZ sites.
+
+```{r}
+tblCENTER = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblCENTER.fst"))[, .(center, program, country, close_d, rural, level, add_center_d, drop_center_d)][order(program, center)]
+```
+
+Merge revised center close date and max program close date into tblCENTER
+
+```{r}
+# merge tblCENTER with rev_close_d to get rev_close_d
+#tblCENTER = merge(tblCENTER, 
+#                  rev_close_d[, .(center, rev_close_d)], 
+#                  by = "center",
+#                  all.x = FALSE, all.y = FALSE)
+
+# merge tblCENTER with program_close_d to get max_close_d
+tblCENTER = merge(tblCENTER, 
+                  program_close_d[, .(program, max_close_d)], 
+                  by = "program",
+                  all.x = TRUE, all.y = FALSE)
+
+# merge tblCENTER with dtg_recomend to get adoption date
+tblCENTER = merge(tblCENTER, 
+                  dtg_recomend[, .(country, dtg_recomend_d)], 
+                  by = "country",
+                  all.x = FALSE, all.y = FALSE)
+
+```
+
+List all sites, excluding those from CIDRZ
+```{r echo=FALSE}
+frq(tblCENTER[program != "CIDRZ"], center)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# `tblBAS`
+
+```{r}
+tblBAS = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblBAS.fst"))[, c("proph_y", "mode", "mode_oth") := NULL]
+```
+
+Number of patients in tblBAS by program
+
+```{r include=FALSE}
+tblBAS_temp = merge(tblBAS, program_close_d, by = "program")
+
+```
+
+
+```{r}
+maxclose <- tblBAS_temp %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(program))
+
+test1 <- tblBAS %>% filter(is.na(program))
+rm(test1); gc()
+```
+
+
+```{r include=FALSE}
+# merge tblBAS with tblCENTER to get country
+tblBAS = merge(tblBAS, unique(tblCENTER[, .(program, country)],
+                              by = "program",
+                              all.x = TRUE, all.y = FALSE))
+
+tblBAS[, DM := ifelse(country == "ZAF", "UCT", "ISPM")] 
+
+frq(tblBAS, DM)
+
+setcolorder(tblBAS, "country")
+
+```
+
+
+```{r include=FALSE}
+
+#Correct tblVIS center names before merging tblBAS with tblVIS
+
+tblVIS = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblVIS.fst"))
+
+
+tblVIS = merge(tblVIS, 
+                  tblBAS[, .(patient, country, program, DM)], 
+                  by = "patient",
+                  all.x = TRUE, all.y = FALSE)
+
+
+tblVIS[, center2 := center] 
+tblVIS[, center := ifelse(country == "ZAF", toupper(center2), center2)] 
+tblVIS[, center := ifelse(center == "AID FOR AIDS", "AID for AIDS", center)] 
+tblVIS[, center := ifelse(center == "AFRICA CENTER", "AFRICA CENTRE", center)]
+tblVIS[, center := ifelse(center == "" & program == "CIDRZ", "CIDRZ", center)]
+
+# UCT cohorts
+frq(tblVIS[country == "ZAF",], center)
+frq(tblCENTER[country == "ZAF",], center)
+
+# ISPM cohorts
+frq(tblVIS[country != "ZAF" & program != "CIDRZ",], center)
+frq(tblCENTER[country != "ZAF" & program != "CIDRZ",], center)
+
+# CIDRZ cohorts
+frq(tblVIS[country != "ZAF" & program == "CIDRZ",], center)
+frq(tblCENTER[country != "ZAF" & program == "CIDRZ",], center)
+
+#=="AFRICA CENTER", "AFRICA CENTRE", center)]
+#addcenter[, center := ifelse(center =="TLC-SA", "THEMBA LETHU CLINIC", center)]
+
+```
+
+
+```{r}
+frq(tblVIS, preg_y)
+
+sjPlot::tab_xtab(tblVIS$program,
+                 tblVIS$preg_y,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+Starting point is `r number(nrow(tblBAS), big.mark = ",")` patients from all combined cohorts.  
+
+## Check: find patients in tblBAS missing from tblVIS
+
+See also issue [#95](https://github.com/IeDEA-SA/IeDEA_DTG/issues/95) for more info.  
+
+```{r}
+visits = unique(tblVIS[, .(patient, DM, program, country)])
+visits[, in_tblVIS := 1]
+
+
+# merge with tblBAS
+tblBAS = merge(tblBAS,
+                visits[, .(patient, in_tblVIS)],
+                by = "patient",
+                all.x = TRUE, all.y = FALSE)
+
+# patient in tblBAS missing in tblVIS
+tblBASnovis = tblBAS[is.na(in_tblVIS), ]
+
+# only keep patients in tblBAS that are also in tblVIS
+#tblBAS = tblBAS[in_tblVIS ==1 & !is.na(in_tblVIS), ]
+
+```
+
+```{r include=FALSE}
+rm(visits); gc()
+```
+
+
+## `max_close_d` 
+
+Merge maximum program close date from `program_close_d` to tblBAS 
+
+Program level, maximum `max_close_d` was brought from `program_close_d`. Maximum here refers to the fact that if program has more than one center then the maximum (latest) date from all of them was taken into account.  
+
+```{r echo=FALSE}
+tblBAS = merge(tblBAS, program_close_d, by = "program",
+               all.x = TRUE, all.y = FALSE)
+setorder(tblBAS, patient)
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, country)
+frq(tblBAS, program)
+```
+
+## Recoding missing codes 
+
+Recoding variables where missing = 9; recoding 9 to NA.
+
+- `naive_y`
+
+```{r echo=FALSE}
+frq(tblBAS, naive_y)
+```
+
+```{r include=FALSE}
+tblBAS[naive_y == 9, naive_y := NA]
+```
+
+- `aids_y`
+
+```{r echo=FALSE}
+frq(tblBAS, aids_y)
+```
+
+```{r include=FALSE}
+tblBAS[aids_y == 9, aids_y := NA]
+```
+
+- `recart_y`
+
+```{r echo=FALSE}
+frq(tblBAS, recart_y)
+```
+
+```{r include=FALSE}
+tblBAS[recart_y == 9, recart_y := NA]
+```
+
+## Exclusion: missing sex 
+
+Excluding patients with missing sex
+
+- `sex`
+
+```{r echo=FALSE}
+frq(tblBAS, sex)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[sex != 9, ]
+
+tblBAS = tblBAS[, sex := factor(sex,
+                                levels = c(1, 2),
+                                labels = c("Male", "Female")
+)]
+```
+
+## Recoding implausible dates
+
+Using `NA`s for implausible date values.
+
+
+- `birth_d`  
+
+Implausible dates include `1900-01-01`, `1901-01-01`, `1911-11-11` and wrong future dates such as `2031-07-08`, `2047-02-14`. Also any births before 1920.
+
+```{r echo=TRUE}
+frq(tblBAS, year(birth_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(birth_d) & year(birth_d) <= 1920)
+
+frq(tblBAS, !is.na(birth_d) & birth_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(birth_d) & year(birth_d) <= 1920, birth_d_a := "U"]
+tblBAS[!is.na(birth_d) & year(birth_d) <= 1920, birth_d := NA]
+
+tblBAS[!is.na(birth_d) & birth_d >= Sys.Date(), birth_d_a := "U"]
+tblBAS[!is.na(birth_d) & birth_d >= Sys.Date(), birth_d := NA]
+```
+
+For patients where `birth_d_a` is either "<" or "U", make `birth_d` missing.
+There are 195 patients with DOB but with ‘Date approximation for birth_d’ being ‘Before this date’, all from CIDRZ.
+
+```{r echo=TRUE}
+frq(tblBAS, birth_d_a)
+frq(tblBAS[program =="CIDRZ"], birth_d_a =="<")
+```
+
+
+```{r echo=TRUE}
+tblBAS[!is.na(birth_d) & birth_d_a == "U", birth_d := NA]
+tblBAS[!is.na(birth_d) & birth_d_a == "<", birth_d := NA]
+
+```
+
+Histogram of birth dates
+```{r echo=FALSE}
+tblBAS %>% mutate(birth_yr = year(birth_d)) %>%
+  ggplot(aes(x = birth_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year of birth") + ylab("Number of patients")
+```
+
+
+<!-- - **TBC:** dateholder `1980-01-01` for missings `birth_d` in CIDRZ -->
+
+```{r eval=FALSE, include=FALSE}
+# frq(tblBAS, program != "CIDRZ" & birth_d == as.Date("1980-01-01"))
+frq(tblBAS, program == "CIDRZ" & birth_d == as.Date("1980-01-01"))
+# View(tblBAS[program == "CIDRZ" & birth_d == as.Date("1980-01-01"), ])
+
+# tblBAS[program == "CIDRZ" & birth_d == as.Date("1980-01-01"), birth_d_a := ""]
+# tblBAS[program == "CIDRZ" & birth_d == as.Date("1980-01-01"), birth_d := NA]
+```
+
+- `enrol_d`
+
+```{r echo=TRUE}
+frq(tblBAS, year(enrol_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(enrol_d) & year(enrol_d) <= 1990)
+
+frq(tblBAS, !is.na(enrol_d) & enrol_d >= Sys.Date())
+```
+
+
+```{r echo=TRUE}
+tblBAS[!is.na(enrol_d) & year(enrol_d) <= 1990, enrol_d_a := "U"]
+tblBAS[!is.na(enrol_d) & year(enrol_d) <= 1990, enrol_d := NA]
+
+tblBAS[!is.na(enrol_d) & enrol_d >= Sys.Date(), enrol_d_a := "U"]
+tblBAS[!is.na(enrol_d) & enrol_d >= Sys.Date(), enrol_d := NA]
+```
+
+For patients where enrol_d_a is either “<” or “U”, make enrol_d missing. 
+Patients with enrol_d_a "enrol_d before this date" are all from CIDRZ.
+
+```{r echo=TRUE}
+frq(tblBAS, enrol_d_a)
+frq(tblBAS[program =="CIDRZ"], enrol_d_a =="<")
+```
+
+```{r}
+tblBAS[!is.na(enrol_d) & enrol_d_a == "<", enrol_d := NA]
+tblBAS[!is.na(enrol_d) & enrol_d_a == "U", enrol_d := NA]
+```
+
+Histogram of enrol date
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(enrol_d)) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients")
+```
+
+
+- `recart_d`
+
+```{r echo=TRUE}
+frq(tblBAS, year(recart_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(recart_d) & year(recart_d) <= 1990)
+
+frq(tblBAS, !is.na(recart_d) & recart_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(recart_d) & year(recart_d) <= 1990, recart_d_a := "U"]
+tblBAS[!is.na(recart_d) & year(recart_d) <= 1990, recart_d := NA]
+```
+
+For patients where recart_d_a is either “<” or “U”, make recart_d missing. 
+
+```{r}
+frq(tblBAS, recart_d_a)
+frq(tblBAS[recart_d_a =="U"], program)
+```
+
+```{r}
+tblBAS[!is.na(recart_d) & recart_d_a == "<", recart_d := NA]
+tblBAS[!is.na(recart_d) & recart_d_a == "U", recart_d := NA]
+```
+
+
+Histogram of recart_d
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(recart_d)) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients")
+```
+
+Histogram of recart_d for Malawi
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(country =="MWI" & var_yr >2010) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients") +
+ scale_x_continuous(breaks = seq(2010, 2022, by =2))
+```
+
+
+Histogram of recart_d for Newlands
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(program =="NEWLANDS" & var_yr >2010) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients") +
+scale_x_continuous(breaks = seq(2010, 2022, by =2))
+```
+
+
+Histogram of recart_d for Lighthouse
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(program =="LIGHTHOUSE" & var_yr >2010) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients") +
+  scale_x_continuous(breaks = seq(2010, 2022, by =2))
+```
+
+```{r eval=FALSE, include=FALSE}
+tblBAS_lighthouse <- tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(program =="LIGHTHOUSE"& var_yr >2013) 
+
+frq(tblBAS_lighthouse, in_tblVIS)
+frq(tblBAS_lighthouse, naive_y)
+
+frq(tblBAS, naive_y)
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+tblBAS_newlands <- tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(program =="NEWLANDS" & var_yr >2013) 
+
+frq(tblBAS_newlands, in_tblVIS)
+frq(tblBAS_newlands, naive_y)
+
+frq(tblBAS, naive_y)
+
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+
+tblBAS %>% mutate(var_yr = year(recart_d)) %>% filter(program !="LIGHTHOUSE" & var_yr >2013) %>%
+  frq(naive_y)
+
+frq(tblBAS_newlands, in_tblVIS)
+frq(tblBAS_newlands, naive_y)
+
+frq(tblBAS, naive_y)
+
+
+```
+
+
+
+
+- `hiv_pos_d`  
+
+```{r echo=TRUE}
+frq(tblBAS, year(hiv_pos_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(hiv_pos_d) & year(hiv_pos_d) <= 1979)
+
+frq(tblBAS, !is.na(hiv_pos_d) & hiv_pos_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(hiv_pos_d) & year(hiv_pos_d) <= 1979, hiv_pos_d_a := "U"]
+tblBAS[!is.na(hiv_pos_d) & year(hiv_pos_d) <= 1979, hiv_pos_d := NA]
+
+tblBAS[!is.na(hiv_pos_d) & hiv_pos_d >= Sys.Date(), hiv_pos_d_a := "U"]
+tblBAS[!is.na(hiv_pos_d) & hiv_pos_d >= Sys.Date(), hiv_pos_d := NA]
+```
+
+Histogram of HIV positive date
+```{r echo=FALSE}
+tblBAS %>% mutate(var_yr = year(hiv_pos_d)) %>%
+  ggplot(aes(x = var_yr)) +
+  geom_histogram(binwidth = 1) +
+  xlab("Year") + ylab("Number of patients")
+```
+
+## Exclusion: missing and implausible dates 
+
+-`birth_d`: excluding patients with missing, unknown or yearly precision
+
+```{r include=FALSE}
+# frq(tblBAS, !is.na(birth_d) & birth_d_a == "U")
+frq(tblBAS, is.na(birth_d) & birth_d_a == "")
+tblBAS[is.na(birth_d) & birth_d_a == "", birth_d_a := "U"]
+
+frq(tblBAS, birth_d_a)
+```
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(birth_d))
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!is.na(birth_d), ]
+```
+
+```{r include=FALSE}
+tblBAS[, birth_d_a := NULL]
+```
+
+-`enrol_d`: excluding patients with missing, unknown or yearly precision
+
+```{r include=FALSE}
+# frq(tblBAS, !is.na(birth_d) & birth_d_a == "U")
+frq(tblBAS, is.na(enrol_d) & enrol_d_a == "")
+tblBAS[is.na(enrol_d) & enrol_d_a == "", enrol_d_a := "U"]
+
+frq(tblBAS, enrol_d_a)
+```
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(enrol_d))
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!is.na(enrol_d), ]
+```
+
+```{r include=FALSE}
+tblBAS[, enrol_d_a := NULL]
+```
+
+-`recart`_d`: excluding patients with missing, unknown or yearly precision
+
+```{r include=FALSE}
+# frq(tblBAS, !is.na(birth_d) & birth_d_a == "U")
+frq(tblBAS, is.na(recart_d) & recart_d_a == "")
+tblBAS[is.na(recart_d) & recart_d_a == "", recart_d_a := "U"]
+
+frq(tblBAS, recart_d_a)
+```
+
+Programs with patients missing recart_d.
+```{r echo=FALSE}
+frq(tblBAS[is.na(recart_d)], program)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!is.na(recart_d), ]
+```
+
+```{r include=FALSE}
+tblBAS[, recart_d_a := NULL]
+```
+
+
+- excluding patients with `birth_d` after `recart_d`  
+
+```{r echo=FALSE}
+# View(tblBAS[birth_d > recart_d, ])
+frq(tblBAS, !is.na(recart_d) & birth_d > recart_d)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(recart_d) & birth_d > recart_d), ]
+```
+
+- excluding patients with `birth_d` after `enrol_d`
+
+```{r echo=FALSE}
+# View(tblBAS[!is.na(enrol_d) & birth_d > enrol_d, ])
+frq(tblBAS, !is.na(enrol_d) & birth_d > enrol_d)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(enrol_d) & birth_d > enrol_d), ]
+```
+
+- excluding patients with `birth_d` after `hiv_pos_d`
+
+```{r echo=FALSE}
+# View(tblBAS[!is.na(hiv_pos_d) & birth_d > hiv_pos_d, ])
+frq(tblBAS, !is.na(hiv_pos_d) & birth_d > hiv_pos_d)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(hiv_pos_d) & birth_d > hiv_pos_d), ]
+```
+
+## Exclusion: 2004 ART start 
+
+Excluding patients who started ART before 2004  
+
+```{r echo=FALSE}
+# View(tblBAS[year(recart_d) < 2004, ])
+# frq(tblBAS, is.na(recart_d))
+frq(tblBAS, !is.na(recart_d) & year(recart_d) < 2004)
+```
+
+Majority in `AfA`:  
+
+```{r echo=FALSE}
+frq(tblBAS[!is.na(recart_d) & year(recart_d) < 2004, ], program)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(recart_d) & year(recart_d) < 2004), ]
+```
+
+
+## Exclusion: ART start after DB closure 
+
+Excluding patients that started ART after official close dates of the cohort (`max_close_d`)
+
+```{r echo=FALSE}
+# View(tblBAS[!is.na(recart_d) & recart_d > max_close_d, ])
+frq(tblBAS, !is.na(recart_d) & recart_d > max_close_d)
+```
+
+
+Vast majority in `KHAYELITSHA` and `LIGHTHOUSE` :  
+
+```{r echo=FALSE}
+frq(tblBAS[!is.na(recart_d) & recart_d > max_close_d, ], program)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[is.na(recart_d) | recart_d <= max_close_d, ]
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[is.na(recart_d) | recart_d <= max_close_d, ]
+```
+
+## Check 1: incomplete ART - wrong indicator
+
+```{r include=FALSE}
+# frq(tblBAS, is.na(recart_y) & is.na(recart_d))
+# View(tblBAS[is.na(recart_y) & is.na(recart_d), ])
+```
+
+There are a few patients who have recart_y ==0, but have an ART start date     
+
+```{r echo=FALSE}
+# View(tblBAS[recart_y == 0 & !is.na(recart_d), ])
+frq(tblBAS, recart_y == 0 & !is.na(recart_d))
+```
+
+All in `AfA` and `CIDRZ`:  
+
+```{r echo=FALSE}
+frq(tblBAS[recart_y == 0 & !is.na(recart_d), ], program)
+```
+
+**These patients had their `recart_y` status replaced to `1`.**  
+
+```{r include=FALSE}
+tblBAS[recart_y == 0 & !is.na(recart_d), recart_y := 1]
+```
+
+<!-- ----------------------------------------------------- -->
+
+# `tblLTFU`
+
+```{r}
+tblLTFU = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblLTFU.fst"))[, c("patient", "drop_y", "drop_d", "drop_d_a", "drop_rs", "death_y", "death_d", "death_d_a", "l_alive_d", "l_alive_d_a")]
+```
+
+Starting point is `r number(nrow(tblLTFU), big.mark = ",")` patients from all combined cohorts.  
+
+## Retain records in `tblLTFU` when  match `tblBAS`and visversa
+
+```{r}
+tblLTFU = merge(tblBAS[, .(patient, program)],
+                tblLTFU,
+                by = "patient",
+                all.x = FALSE, all.y = FALSE
+)
+
+setorder(tblLTFU, patient)
+```
+
+- bring `tblLTFU` info to `tblBAS` only keeping patients included  
+
+```{r include=FALSE}
+# anti join for checks
+nolink = setDT(tblBAS)[!tblLTFU, on = c("patient", "program")]
+nolink = nolink[, .(patient, program)]
+nolink[, no_ltfu := 1]
+```
+
+```{r include=FALSE}
+tblBAS = merge(tblBAS,
+               tblLTFU,
+               by = c("patient", "program"),
+               all.x = TRUE, all.y = FALSE
+)
+
+tblBAS = merge(tblBAS,
+               nolink,
+               by = c("patient", "program"),
+               all.x = TRUE, all.y = FALSE
+)
+
+tblBAS[is.na(no_ltfu), no_ltfu := 0]
+frq(tblBAS, no_ltfu)
+```
+
+There are `r number(nrow(nolink), big.mark = ",")` patients without the link to `tblLTFU` (this is also discussed in issue [#52](https://github.com/IeDEA-SA/IeDEA_DTG/issues/52)).   
+Almost all clustered in `LIGHTHOUSE`:    
+
+```{r echo=FALSE}
+# CrossTable(tblBAS$program, tblBAS$no_ltfu, prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE)
+frq(tblBAS[no_ltfu == 1, ], program)
+```
+
+```{r include=FALSE}
+rm(nolink); gc()
+```
+
+### Drop patients in tblBAS who are missing from tblLTFU. 
+
+```{r}
+frq(tblBAS, no_ltfu)
+tblBAS = tblBAS[no_ltfu ==0, ]
+tblBAS[, no_ltfu := NULL]
+```
+
+
+## Recoding implausible dates
+
+- `l_alive_d`
+
+```{r echo=TRUE}
+frq(tblBAS, year(l_alive_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(l_alive_d) & year(l_alive_d) <= 1920)
+
+frq(tblBAS, !is.na(l_alive_d) & l_alive_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(l_alive_d) & year(l_alive_d) <= 1920, l_alive_d_a := "U"]
+tblBAS[year(l_alive_d) <= 1920, l_alive_d := NA]
+
+tblBAS[!is.na(l_alive_d) & l_alive_d >= Sys.Date(), l_alive_d_a := "U"]
+tblBAS[!is.na(l_alive_d) & l_alive_d >= Sys.Date(), l_alive_d := NA]
+```
+
+- `drop_d`
+
+```{r echo=TRUE}
+frq(tblBAS, year(drop_d))
+```
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(drop_d) & year(drop_d) <= 1920)
+
+frq(tblBAS, !is.na(drop_d) & drop_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(drop_d) & year(drop_d) <= 1920, drop_d_a := "U"]
+tblBAS[!is.na(drop_d) & year(drop_d) <= 1920, drop_d := NA]
+
+tblBAS[!is.na(drop_d) & drop_d >= Sys.Date(), drop_d_a := "U"]
+tblBAS[!is.na(drop_d) & drop_d >= Sys.Date(), drop_d := NA]
+```
+
+<!-- - implausible dates of `death_d` -->
+
+- `death_d`
+
+```{r echo=TRUE}
+frq(tblBAS, year(death_d))
+```
+
+
+```{r echo=TRUE}
+frq(tblBAS, !is.na(death_d) & year(death_d) <= 1920)
+
+frq(tblBAS, !is.na(death_d) & death_d >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(death_d) & year(death_d) <= 1920, death_d_a := "U"]
+tblBAS[!is.na(death_d) & year(death_d) <= 1920, death_d := NA]
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#additionally, in cases where any of the three dates were captured with yearly or unknown precision they were recoded to `NA`s
+frq(tblBAS, drop_y)
+frq(tblBAS, drop_d_a)
+
+frq(tblBAS, death_y)
+frq(tblBAS, death_d_a)
+
+frq(tblBAS, l_alive_d_a)
+
+# don't run
+#tblBAS[drop_d_a %in% c("U", "Y", "<"), drop_d := NA]
+#tblBAS[death_d_a %in% c("U", "Y", ">"), death_d := NA]
+#tblBAS[l_alive_d_a %in% c("U"), l_alive_d := NA]
+
+```
+
+## Exclusion 1: implausible dates
+
+- last alive before `2004`
+
+```{r echo=FALSE}
+# summary(tblBAS$l_alive_d)
+# View(tblBAS[!is.na(l_alive_d) & year(l_alive_d) < 2004, ])
+frq(tblBAS, !is.na(l_alive_d) & year(l_alive_d) < 2004)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(l_alive_d) & year(l_alive_d) < 2004), ]
+```
+
+- drop before `2004`
+
+```{r echo=FALSE}
+# summary(tblBAS$drop_d)
+frq(tblBAS, !is.na(drop_d) & year(drop_d) < 2004)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(drop_d) & year(drop_d) < 2004), ]
+```
+
+- deaths before `2004`
+
+```{r echo=FALSE}
+# summary(tblBAS$death_d)
+frq(tblBAS, !is.na(death_d) & year(death_d) < 2004)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[!(!is.na(death_d) & year(death_d) < 2004), ]
+```
+
+## Exclusion 2: dates inconsistencies
+
+- `recart_d` after `death_d`- not excluded but `recart`_d` to `NA`
+
+```{r echo=FALSE}
+# View(tblBAS[ !is.na(recart_d) & !is.na(death_d) & recart_d > death_d, ])
+
+frq(tblBAS, !is.na(recart_d) & !is.na(death_d) & recart_d > death_d)
+```
+
+```{r include=FALSE}
+# tblBAS = tblBAS[! (!is.na(recart_d) & !is.na(death_d) & recart_d > death_d), ]
+tblBAS[!is.na(recart_d) & !is.na(death_d) & recart_d > death_d, recartafterdeath :=1]
+tblBAS[!is.na(recart_d) & !is.na(death_d) & recart_d > death_d, recart_d :=NA]
+frq(tblBAS, recartafterdeath)
+tblBAS[, recartafterdeath := NULL]
+```
+
+- `drop_d` after `death_d`- not excluded but `drop_d` to `NA`
+
+```{r echo=FALSE}
+frq(tblBAS, !is.na(drop_d) & !is.na(death_d) & drop_d > death_d)
+```
+
+```{r include=FALSE}
+tblBAS[!is.na(drop_d) & !is.na(death_d) & drop_d > death_d, dropafterdeath :=1]
+tblBAS[!is.na(drop_d) & !is.na(death_d) & drop_d > death_d, drop_d :=NA]
+frq(tblBAS, dropafterdeath)
+tblBAS[, dropafterdeath := NULL]
+
+```
+
+- `l_alive_d` after `death_d` - not excluded but `l_alive_d` to `NA`
+
+```{r echo=FALSE}
+# View(tblBAS[!is.na(l_alive_d) & !is.na(death_d) & l_alive_d > death_d, ])
+frq(tblBAS, !is.na(l_alive_d) & !is.na(death_d) & l_alive_d > death_d)
+```
+
+```{r include=FALSE}
+# tblBAS = tblBAS[! (!is.na(l_alive_d) & !is.na(death_d) & l_alive_d > death_d), ]
+tblBAS[!is.na(l_alive_d) & !is.na(death_d) & l_alive_d> l_alive_d, aliveafterdeath :=1]
+tblBAS[!is.na(l_alive_d) & !is.na(death_d) & l_alive_d > death_d, l_alive_d :=NA]
+frq(tblBAS, aliveafterdeath)
+tblBAS[, aliveafterdeath := NULL]
+```
+
+- missing `l_alive_d` date; **not excluded, no change**, will be worked on later with revised outcome date     
+
+```{r echo=FALSE}
+# View(tblBAS[is.na(l_alive_d), ])
+frq(tblBAS, is.na(l_alive_d))
+```
+
+
+# Number of patients in tblBAS
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+
+# Saving data 
+
+## Local  
+
+This state of data is preserved in `data` directory. `fst` files for R and `dta` files for Stata are saved.    
+
+```{r include=FALSE}
+
+write_fst(tblCENTER, "data_temp/tblCENTER_v001.fst")
+# tblCENTER = data.table(read_fst("data_temp/tblCENTER_v001.fst"))
+
+write_fst(tblBAS, "data_temp/tblBAS_v001.fst")
+# tblBAS = data.table(read_fst("data_temp/tblBAS_v001.fst"))
+
+write_fst(tblLTFU, "data_temp/tblLTFU_v001.fst")
+# tblLTFU = data.table(read_fst("data_temp/tblLTFU_v001.fst"))
+
+write_fst(tblVIS, "data_temp/tblVIS_v001.fst")
+# tblVIS = data.table(read_fst("data_temp/tblVIS_v001.fst"))
+
+# write_fst(rev_close_d, "data_temp/rev_close_d_v001.fst")
+
+# write_fst(dtg_recomend, "data_temp/dtg_recomend_v001.fst")
+
+# write_fst(program_close_d, "data_temp/program_close_d_v001.fst")
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report::report(sessionInfo())
+```
+
+<!-- ----------------------------------------------------- -->

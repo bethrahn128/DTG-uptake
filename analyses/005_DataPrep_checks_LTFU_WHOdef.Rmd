@@ -1,0 +1,2204 @@
+---
+title: "SA256 DTG uptake <br> Checks, WHO LTFU definition"
+subtitle: " "
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+import::from("psych", "geometric.mean")
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(
+  cache = FALSE,
+  prompt = FALSE,
+  tidy = FALSE,
+  comment = NA,
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r include=FALSE}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# IeDEA-SA Data Prep
+
+Raw Stata and `fst` files come from central directory of `IeDEA_core`.  
+
+Using release `Stata_202308_Aug`.  
+
+```{r eval=FALSE, include=FALSE}
+list.files("../IeDEA_core/data/Stata_202308_Aug/", pattern = "\\.fst$") %>%
+  kable(col.names = "Datasets - new") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = F
+  )
+```
+
+## Druglist
+
+Updated `druglist` dataset from the `ART-codes` repo.   
+
+```{r include=FALSE}
+druglist = data.table(readr::read_csv("https://raw.githubusercontent.com/IeDEA-SA/ART-codes/main/data-raw/IeDEA_druglist.csv"))[, c("drug_orig") := NULL]
+
+druglist[, drug := trimws(drug, which = "both")]
+```
+
+```{r echo=FALSE}
+druglist %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+druglist = druglist[, .(art_id, drug, arv_class)]
+```
+
+## Official DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+```
+
+```{r echo=FALSE}
+dtg_recomend %>% select(country, dtg_recomend_d, dtg_recomend_d_initiate, dtg_recomend_d_switch) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r}
+rev_close_d = data.table(read_fst("data_temp/rev_close_d_v001.fst"))
+
+program_close_d = data.table(read_fst("data_temp/program_close_d_v001.fst"))
+
+tblCENTER = data.table(read_fst("data_temp/tblCENTER_v001.fst"))
+
+tblART_start = data.table(read_fst("data_temp/tblART_start_v002.fst"))
+
+tblBAS = data.table(read_fst("data_temp/tblBAS_v004.fst"))
+
+tblLTFU = data.table(read_fst("data_temp/tblLTFU_v004.fst"))
+
+tblART = data.table(read_fst("data_temp/tblART_v004.fst"))
+
+tblLAB_RNA = data.table(read_fst("data_temp/tblLAB_RNA_v004.fst"))
+
+tblLAB_CD4 = data.table(read_fst("data_temp/tblLAB_CD4_v004.fst"))
+
+tblVIS = data.table(read_fst("data_temp/tblVIS_v004.fst"))
+
+tblCLIN = data.table(read_fst("data_temp/tblCLIN_v004.fst"))
+
+
+```
+
+```{r}
+  tblLTFU = merge(tblBAS[, .(patient, country)],
+                tblLTFU,
+                by = "patient",
+                all.x = FALSE, all.y = FALSE
+)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Outcome & outcome date
+
+Discussion related to the problem are [here](https://github.com/RPanczak/IeDEA_DTG/issues/27) and [here](https://github.com/IeDEA-SA/IeDEA_analyse/issues/9).  
+
+Code here is largely synchronized with ANALYSE preps led by Yann [here](https://github.com/IeDEA-SA/IeDEA_analyse/blob/main/analyses/04_outcomes.Rmd).  
+
+### Set outcomes
+
+Using `drop_y` & `drop_rs` ([variable description]](redcap.vanderbilt.edu/plugins/iedea/des/index.php?pid=64149&tid=17&page=variables)) to create simplified `outcome`:   
+
+- 1 = death, 
+- 2 = RIC, 
+- 3 = transfer, 
+- 4 = LTFU or dropped for unknown reason
+
+```{r echo=FALSE}
+frq(tblBAS, death_y)
+frq(tblBAS, drop_y)
+
+# with(tblBAS, table(death_y, drop_y, useNA = "a"))
+
+with(tblBAS, table(drop_y, drop_rs, useNA = "a"))
+```
+
+## RIC
+
+```{r}
+tblBAS[(death_y == 0 | is.na(death_y)) & (drop_y == 0 | is.na(drop_y)), outcome := "RIC"]
+tblLTFU[(death_y == 0 | is.na(death_y)) & (drop_y == 0 | is.na(drop_y)), OUTCOME := "RIC"]
+```
+
+## Transfer
+
+```{r}
+tblBAS[drop_y == 1 & drop_rs %in% c(3, 3.1, 4, 4.1), outcome := "Transfer"]
+tblLTFU[drop_y == 1 & drop_rs %in% c(3, 3.1, 4, 4.1), OUTCOME := "Transfer"]
+```
+
+## LTFU
+
+```{r}
+tblBAS[drop_y == 1 & drop_rs %in% c(1, 2, 2.1, 5, 5.1, 6, 7, 8, 9), outcome := "LTFU"]
+
+#tblLTFU[drop_y == 1 & is.na(drop_rs), OUTCOME := "LTFU"]
+tblLTFU[drop_y == 1 & drop_rs %in% c(1, 2, 2.1, 5, 5.1, 6, 7, 8, 9), OUTCOME := "LTFU"]
+
+```
+
+## Death
+
+```{r}
+tblBAS[death_y == 1, outcome := "Death"]
+tblLTFU[death_y == 1, OUTCOME := "Death"]
+```
+
+## Results overall
+
+```{r echo=FALSE}
+# View(tblBAS[is.na(outcome), ])
+frq(tblBAS, outcome)
+frq(tblLTFU, OUTCOME)
+```
+
+## Results across cohorts 
+
+### Variable X axis
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+### Same X axis
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program)) +
+  coord_flip()
+```
+
+## Checking for problems
+
+- patients shouldn't have both `drop_y` and `death_y` or `death_d` simultaneously (use death, if have both)
+
+FIXME: temporary solution to fullfil  
+
+See for details: https://github.com/IeDEA-SA/South_Africa_Data_Extraction/issues/8
+
+```{r}
+# View(tblBAS[drop_y == 1 & (death_y == 1 | !is.na(death_d)), ])
+
+tblBAS[drop_y == 1 & (death_y == 1 | !is.na(death_d)), fixes := 1]
+frq(tblBAS, fixes)
+tblBAS[fixes == 1, drop_y := 0]
+tblBAS[fixes == 1, drop_d := NA]
+tblBAS[fixes == 1, drop_d_a := NA]
+tblBAS[, fixes := NULL]
+```
+
+```{r include=FALSE}
+stopifnot(nrow(tblBAS[drop_y == 1 & (death_y == 1 | !is.na(death_d)), ]) == 0)
+```
+
+- patients should have a valid `outcome`, if not, check for invalid `drop_rs` values
+
+```{r echo=FALSE}
+stopifnot(tblBAS[, all(!is.na(outcome))])
+```
+
+- **Correction**: CIDRZ (and any other cohorts) patients with `drop_y` ==1 and `drop_d` == `max_close_d` & `drop_d_a` == "<", need to correct to `l_alive_d` + 1 (if not missing)
+
+```{r}
+test = tblBAS[l_alive_d == last_enc_d & drop_y ==0 & death_y ==0, same_date := 1]
+test = tblBAS[is.na(same_date),]
+frq(test, same_date)
+```
+
+
+```{r}
+test = tblBAS[drop_y == 1 & !is.na(drop_d) & drop_d == max_close_d & (!is.na(drop_d_a) & drop_d_a == "<") & !is.na(l_alive_d), edit_drop_d := 1]
+test = test[edit_drop_d ==1,]
+frq(test, outcome)
+frq(test, drop_d_a)
+
+rm(test)
+```
+
+
+```{r}
+tblBAS = tblBAS[drop_y == 1 & !is.na(drop_d) & drop_d == max_close_d & !is.na(drop_d_a) & drop_d_a == "<" & !is.na(l_alive_d), edit_drop_d := 1]
+tblBAS = tblBAS[drop_y == 1 & !is.na(drop_d) & drop_d == max_close_d & !is.na(drop_d_a) & drop_d_a == "<" & !is.na(l_alive_d), drop_d := l_alive_d +1]
+frq(tblBAS, edit_drop_d)
+```
+
+
+```{r}
+stopifnot(nrow(tblBAS[edit_drop_d == 1 & (drop_d == max_close_d), ]) == 0)
+```
+
+
+- patients with `drop_y` ==1 but missing`drop_d`, missing drop date imputed from `l_alive_d` (if not missing)      
+
+```{r echo=FALSE}
+# View(tblBAS[drop_y == 1 & is.na(drop_d), ])
+frq(tblBAS[drop_y == 1], is.na(drop_d))
+frq(tblBAS[drop_y == 1], is.na(drop_d) & is.na(l_alive_d))
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[drop_y == 1 & is.na(drop_d), drop_d := l_alive_d +1]
+```
+
+- patients with `death_y` ==1 but missing`death_d``, missing death date imputed from `l_alive_d` (if not missing)      
+
+```{r}
+tblBAS[is.na(death_d) & death_y ==1, death_mis := 1]
+frq(tblBAS, death_mis)
+frq(tblBAS[death_mis == 1], is.na(l_alive_d))
+```
+
+```{r}
+tblBAS = tblBAS[death_y == 1 & is.na(death_d), death_d := l_alive_d +1]
+```
+
+
+```{r eval=FALSE, include=FALSE}
+stopifnot(nrow(tblBAS[death_y == 1 & is.na(death_d), ]) == 0)
+```
+
+## Define outcome date
+
+`outcome_d` based on `drop_d` or `death_d` (should never be both non-missing for a single patient), left empty if RIC or if the drop or death date is missing .  
+
+```{r include=FALSE}
+stopifnot(tblBAS[, !any(!is.na(drop_d) & !is.na(death_d))])
+
+tblBAS[!is.na(drop_d), outcome_d := drop_d]
+tblBAS[!is.na(death_d), outcome_d := death_d]
+```
+
+Remaining missing outcome date
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(outcome_d))
+
+```
+
+All nicely clustered in RIC:    
+
+```{r echo=FALSE}
+tblBAS[, table(outcome, is.na(outcome_d), useNA = "always")]
+```
+
+Outcome date replaced to DB closure for those.  
+
+```{r}
+tblBAS[is.na(outcome_d), outcome_d := max_close_d]
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Year of patient last encounter
+
+## by program
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = last_enc_d)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+
+## by country
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = last_enc_d)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("") +
+  ylab("Number of patients") +
+  facet_wrap(vars(country), scales = "free_x") +
+  coord_flip()
+```
+
+## by initiation cohort
+
+```{r echo=FALSE}
+tblBAS[recart_d >= dtg_recomend_d,] %>%
+  ggplot(aes(x = last_enc_d)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+## by transition cohort
+
+```{r echo=FALSE}
+tblBAS[recart_d < dtg_recomend_d,] %>%
+  ggplot(aes(x = last_enc_d)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+```{r}
+cidrz <- tblBAS %>% select(patient, program, last_enc_d, dtg_recomend_d,outcome, outcome_d, dtg, recart_d) %>% filter(program =="CIDRZ" & recart_d < dtg_recomend_d & year(last_enc_d) ==2019)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Calculate next encounter date
+
+**to be used for WHO LTFU algorithm: >90 days late to last scheduled appointment.**
+
+
+## Append "last" next visit date (from `tblVIS`) for each patient
+
+```{r}
+# get program-provided next_visit_d (often missing)
+setorder(tblVIS, patient, vis_d)
+tblBAS = tblVIS[, .(patient, next_visit_d)][tblBAS, on = "patient", mult = "last"]
+setcolorder(tblBAS, c("patient", "program"))
+```
+
+
+```{r}
+tblCLIN = merge(tblBAS[, .(patient, program, country, next_visit_d)], tblCLIN, by = "patient")
+
+tblCLIN[, `:=` (first_enc_d = min(enc_d), last_enc_d = max(enc_d)), by = "patient"]
+```
+
+## Days between successive encounters ("gap")  
+
+```{r}
+tblCLIN[, diff := shift(enc_d, 1, type = "lead") - enc_d, by = "patient"]
+```
+
+Categorical years on ART: [0,1), [1,2), [2,4), or [4,Inf)  
+
+```{r}
+tblCLIN[, yoa_cat := cut(as.numeric(last_enc_d - first_enc_d) / 365.25, breaks = c(0, 1, 2, 4, Inf), right = FALSE)]
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblCLIN[, .SD[1], by = patient], yoa_cat)
+```
+
+Median gap + thresholds for 'outliers' gaps
+
+```{r}
+gap_quantiles = tblCLIN[, .(
+  p25 = quantile(diff, 0.25, na.rm = TRUE),
+  p50 = quantile(diff, 0.50, na.rm = TRUE),
+  p95 = quantile(diff, 0.95, na.rm = TRUE)
+),
+by = .(program, yoa_cat)
+]
+gap_quantiles[p95 > 365, p95 := 365]
+gap_quantiles[p25 > 365, p25 := 365]
+gap_quantiles[p50 > 365, p50 := 365]
+
+tblCLIN = merge(tblCLIN, gap_quantiles, by = c("program", "yoa_cat"))
+
+tblCLIN[, rev_diff := diff]
+```
+
+```{r include=FALSE}
+rm(gap_quantiles); gc()
+```
+
+## Fixing 'outlier' gaps between encounters  
+
+```{r eval=FALSE, include=FALSE}
+frq(tblCLIN, diff < p25)
+frq(tblCLIN, diff > p95)
+```
+
+```{r}
+tblCLIN[diff < p25, rev_diff := NA]
+tblCLIN[diff > p95, rev_diff := NA]
+```
+
+If first encounter has invalid gap to second encounter, replace with median gap from that program and years on ART category  
+
+```{r}
+tblCLIN[is.na(rev_diff) & enc_d == first_enc_d, rev_diff := p50]
+```
+
+```{r eval=FALSE, include=FALSE}
+## good test case
+View(tblCLIN[patient == "NLNL10000359", ])
+tblBAS[patient == "NLNL10000359", ]
+```
+
+If value for gap is missing, use latest prior available gap value (using `na.locf` function from `zoo` package)  
+
+```{r include=FALSE}
+gc()
+```
+
+```{r}
+tblCLIN[, rev_diff := zoo::na.locf(rev_diff), by = "patient"]
+
+stopifnot(tblCLIN[, all(!is.na(rev_diff))])
+
+tblCLIN[, next_enc_d := enc_d + rev_diff]
+```
+
+
+```{r include=FALSE}
+
+tblBAS = tblCLIN[, .(patient, next_enc_d, yoa_cat)][tblBAS, on = "patient", mult = "last"]
+```
+
+Calculated next scheduled encounter has advantage of being complete compared to next_visit_d 
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(next_enc_d))
+frq(tblBAS, is.na(next_visit_d))
+```
+
+Difference between `next_enc_d` and `last_enc_d`, per program  
+
+```{r echo=FALSE}
+tblBAS[, paste(range(next_enc_d - last_enc_d, na.rm = TRUE), collapse = "-"), by = "program"] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+## Median time (IQR) until next scheduled encounter, per program  
+
+```{r}
+next_encounter_table = tblBAS[, .(median_iqr = c(paste0(
+  median(next_enc_d - last_enc_d, na.rm = TRUE),
+  " (",
+  quantile(next_enc_d - last_enc_d, na.rm = TRUE, p = 0.25),
+  "-",
+  quantile(next_enc_d - last_enc_d, na.rm = TRUE, p = 0.75),
+  ")"
+))),
+by = "program"
+]
+
+next_encounter_table %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+```{r eval=FALSE, include=FALSE}
+rm(next_encounter_table); gc()
+```
+
+If patient has no clinical encounter, set date of next encounter to X days after enrolment date, where X is the median time to next encounter in that patient's program/cohort and with <1 years on ART  
+
+```{r}
+frq(tblBAS, is.na(next_enc_d))
+next_encounter_median = tblBAS[yoa_cat == "[0,1)", .(med = median(next_enc_d - last_enc_d, na.rm = TRUE)), by = "program"]
+
+tblBAS = merge(tblBAS, next_encounter_median, by = "program")
+tblBAS[is.na(next_enc_d), next_enc_d := enrol_d + med]
+tblBAS[, med := NULL]
+frq(tblBAS, is.na(next_enc_d))
+```
+
+## Median time to next encounter per cohort within first year on ART
+
+```{r echo=FALSE}
+next_encounter_median %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+```{r include=FALSE}
+rm(next_encounter_median); gc()
+```
+
+Comparing `next_visit_d` with `last_enc_d` and `next_enc_d`.  
+
+Patients having a clinical encounter after the next predicted visit date:  
+
+```{r echo=FALSE}
+frq(tblBAS, next_visit_d < last_enc_d & !is.na(next_visit_d))
+```
+
+Comparing predicted values of next clinical encounter to observed next visit date:  
+
+```{r }
+summary(tblBAS[, as.numeric(next_visit_d - next_enc_d)])
+tblBAS[, range(as.numeric(next_visit_d - next_enc_d), na.rm = TRUE)]
+tblBAS[, quantile(as.numeric(next_visit_d - next_enc_d), probs = c(0.25, 0.5, 0.75), na.rm = TRUE)]
+```
+
+```{r echo=FALSE}
+tblBAS[abs(next_visit_d - next_enc_d) < 250, ] %>% 
+  ggplot(aes(x = as.numeric(next_visit_d - next_enc_d))) +
+  geom_histogram(binwidth = 30) +
+  xlab("Difference in days") +
+  ggtitle("Difference between next visit and next predicted encounter") +
+  theme_minimal()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Revised outcome
+
+```{r include=FALSE}
+tblBAS[, `:=` (rev_outcome = "", rev_outcome_d = as.Date(NA))]
+```
+
+## Step 1: death, transfers -> no revision to outcome, even if there are documented clinical encounters after the fact
+
+```{r echo=FALSE}
+tblBAS[outcome == "Death", `:=` (rev_outcome = outcome, rev_outcome_d = outcome_d)]
+
+tblBAS[outcome == "Transfer", `:=` (rev_outcome = outcome, rev_outcome_d = outcome_d)]
+
+#tblBAS[outcome == "LTFU", `:=` (rev_outcome = outcome, rev_outcome_d = outcome_d)]
+
+```
+
+- Patients who died before the last encounter date  
+
+```{r echo=FALSE}
+frq(tblBAS[rev_outcome == "Death" & !is.na(rev_outcome_d)], rev_outcome_d < last_enc_d)
+```
+
+In very few cases where there was a DTG ART record **after** revised *death*, this patients were kept in the dataset but excluded from the DTG pool.  
+
+```{r echo=FALSE}
+# View(tblBAS[dtg == 1 & rev_outcome == "Death" & rev_outcome_d < dtg_min_pat, ])
+frq(tblBAS, !is.na(dtg_min_pat) & !is.na(rev_outcome_d) & rev_outcome == "Death" & rev_outcome_d < dtg_min_pat)
+```
+
+```{r include=FALSE}
+tblBAS[dtg == 1 & rev_outcome == "Death" & rev_outcome_d < dtg_min_pat, temp := 1]
+# frq(tblBAS, temp)
+tblBAS[temp == 1, dtg := 0]
+tblBAS[temp == 1, dtg_min_pat := NA]
+tblBAS[, temp := NULL]
+```
+
+- Patients who transferred before the last encounter date  
+
+```{r}
+frq(tblBAS[rev_outcome == "Transfer" & !is.na(rev_outcome_d)], rev_outcome_d < last_enc_d)
+```
+
+In few cases where there was a DTG ART record **after** revised *transfer*, this patients were again kept in the dataset but excluded from the DTG pool.  
+
+```{r echo=FALSE}
+# View(tblBAS[dtg == 1 & rev_outcome == "Transfer" & rev_outcome_d < dtg_min_pat, ])
+frq(tblBAS, dtg == 1 & rev_outcome == "Transfer" & rev_outcome_d < dtg_min_pat)
+```
+
+```{r include=FALSE}
+tblBAS[dtg == 1 & rev_outcome == "Transfer" & !is.na(rev_outcome_d) & rev_outcome_d < dtg_min_pat, temp := 1]
+# frq(tblBAS, temp)
+tblBAS[temp == 1, dtg := 0]
+tblBAS[temp == 1, dtg_min_pat := NA]
+tblBAS[, temp := NULL]
+```
+
+- Patients who were ltfu before the last encounter date   
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[rev_outcome == "LTFU" & !is.na(rev_outcome_d)], rev_outcome_d < last_enc_d)
+```
+
+Again, in few cases where there was a DTG ART record **after** revised *ltfu*, these patients were again kept in the dataset but excluded from the DTG pool.  
+
+```{r eval=FALSE, include=FALSE}
+# View(tblBAS[dtg == 1 & rev_outcome == "Transfer" & rev_outcome_d < dtg_min_pat, ])
+frq(tblBAS, dtg == 1 & rev_outcome == "LTFU" & rev_outcome_d < dtg_min_pat)
+```
+
+```{r eval=FALSE, include=FALSE}
+tblBAS[dtg == 1 & rev_outcome == "LTFU" & !is.na(rev_outcome_d) & rev_outcome_d < dtg_min_pat, temp := 1]
+# frq(tblBAS, temp)
+tblBAS[temp == 1, dtg := 0]
+tblBAS[temp == 1, dtg_min_pat := NA]
+tblBAS[, temp := NULL]
+```
+
+## Step 2: incorporating deaths recorded in population registers
+
+Using information on vital status from National Population Registers, if available.  
+
+**Note:**  *here UCT data from old delivery still used!*  
+
+** Don't use for now! *
+
+```{r eval=FALSE, include=FALSE}
+tblREV_VITAL_STATUS = data.table(read_fst("../IeDEA_core/data/UCT_2022_03_28/tblREV_VITAL_STATUS.fst"))[, linkage_d := NULL]
+
+tblBAS = merge(tblBAS, 
+               tblREV_VITAL_STATUS[, .(patient, vital_status, npr_death_d, npr_lniked = 1)], 
+               by = "patient", 
+               all.x = TRUE)
+
+tblBAS[is.na(npr_lniked), npr_lniked := 0]
+```
+
+Corrected records:  
+
+```{r eval=FALSE, include=FALSE}
+# View(tblBAS[npr_lniked == 1 & vital_status == 1 & rev_outcome != "Death" & outcome != "Death", ])
+frq(tblBAS, country == "ZAF" & npr_lniked == 1 & vital_status == 1 & rev_outcome != "Death" & outcome != "Death")
+```
+
+```{r eval=FALSE, include=FALSE}
+tblBAS[npr_lniked == 1 & vital_status == 1, `:=` (rev_outcome = "Death", rev_outcome_d = npr_death_d)]
+
+tblBAS[, c("vital_status", "npr_death_d", "npr_lniked") := NULL]
+```
+
+## Step 3: LTFU: patients who didn't die or transfer and were 90 days late to their next scheduled appointment are **set to LTFU**
+
+LTFU date for algorithm: last_ltfu_d is set to their 'next_visit_d' or, if missing or implausible, to 'next_enc_d'.  
+
+If last_ltfu_d + 90 days occurs before max_close_d (and no death or transfer), then individual is classified as LTFU. Otherwise, individual is not LTFU.
+
+```{r echo=FALSE}
+# create new variable that use next_visit_d and if missing, then next_enc_d
+# tblBAS[, last_ltfu_d := if_else(!is.na(next_visit_d), next_visit_d, next_enc_d)]
+tblBAS[, last_ltfu_d := if_else(!is.na(next_visit_d) & next_visit_d > last_enc_d, next_visit_d, next_enc_d)]
+
+frq(tblBAS, rev_outcome)
+
+frq(tblBAS, !rev_outcome %in% c("Death", "Transfer") & last_ltfu_d + 90 < max_close_d)
+
+tblBAS[, last_ltfu_y := if_else(!rev_outcome %in% c("Death", "Transfer") & last_ltfu_d + 90 < max_close_d, 1, 0)]
+
+#tblBAS[, last_ltfu_y := if_else(!is.na(last_ltfu_d), 1, 0)]
+
+frq(tblBAS, last_ltfu_y)
+```
+
+Individuals who are classified as LTFU, have their outcome set to one day after last encounter.  
+rev_outcome_d == last_enc_d + 1
+
+```{r include=FALSE}
+tblBAS[
+  !rev_outcome %in% c("Death", "Transfer") & last_ltfu_y ==1 & last_ltfu_d + 90 < max_close_d,
+  `:=` (rev_outcome = "LTFU", rev_outcome_d = last_enc_d +1)
+]
+
+frq(tblBAS, rev_outcome)
+
+#tblBAS[, c("last_ltfu_y") := NULL]
+
+```
+
+- No patients were LTFU before the last encounter date  
+
+```{r echo=FALSE}
+frq(tblBAS[rev_outcome == "LTFU" & last_ltfu_y ==1 & !is.na(rev_outcome_d)], rev_outcome_d < last_enc_d)
+```
+
+No cases where there was a DTG ART record **after** revised *LTFU*.  
+
+```{r echo=FALSE}
+# View(tblBAS[dtg == 1 & rev_outcome == "Death" & rev_outcome_d < dtg_min_pat, ])
+frq(tblBAS, !is.na(dtg_min_pat) & !is.na(rev_outcome_d) & rev_outcome == "LTFU" & rev_outcome_d < dtg_min_pat)
+```
+
+```{r}
+frq(tblBAS, rev_outcome)
+```
+
+Check revised outcome is not after max_close_d
+
+```{r}
+frq(tblBAS[rev_outcome_d > max_close_d], rev_outcome)
+
+test <- tblBAS %>% filter(rev_outcome_d > max_close_d) %>% select(patient, program, country, last_enc_d, recart_d, rev_outcome, rev_outcome_d, last_ltfu_d, outcome, outcome_d, max_close_d)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+zmb <- tblBAS %>% filter(country =="ZMB")
+zmb <- zmb %>% filter(recart_d < dtg_recomend_d)
+zmb <- zmb %>% filter(age <50)
+
+```
+
+
+## Step 4: RIC: patients who weren't recorded as died, transferred or LTFU and whose next appointment is within 90 days or after database closure are **set to RIC**
+
+```{r}
+frq(tblBAS, !rev_outcome %in% c("LTFU", "Death", "Transfer") & last_ltfu_d + 90 >= max_close_d)
+```
+
+
+```{r include=FALSE}
+tblBAS[
+  !rev_outcome %in% c("Death", "Transfer", "LTFU") & last_ltfu_d + 90 >= max_close_d,
+  `:=` (rev_outcome = "RIC", rev_outcome_d = max_close_d)
+]
+```
+
+- Check all patients have an outcome and outcome_d
+
+```{r}
+frq(tblBAS, is.na(rev_outcome))
+```
+
+```{r}
+frq(tblBAS, is.na(rev_outcome_d))
+```
+
+- Overview of outcomes
+
+```{r}
+frq(tblBAS, rev_outcome)
+```
+
+
+<!-- #### Step 5: replace missing transfer dates with dates of last clinical encounter -->
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[rev_outcome == "Transfer"], is.na(rev_outcome_d))
+
+# tblBAS[rev_outcome == "Transfer" & is.na(rev_outcome_d), rev_outcome_d := last_enc_d]
+```
+
+<!-- #### Step 6: patients died, with no date of death available from any source -> replace with last alive date from tblLTFU -->
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[rev_outcome == "Death"], is.na(rev_outcome_d))
+
+# tblBAS[rev_outcome == "Death" & is.na(rev_outcome_d), rev_outcome_d := l_alive_d]
+```
+
+
+## Checks: outcome date == DTG date
+
+Patients who died, transferred or LTFU on same day as starting DTG had outcome day extended by one day to avoid conflicts. 
+
+```{r include=FALSE}
+frq(tblBAS, dtg == 1  & rev_outcome_d == dtg_min_pat & rev_outcome  %in% c("Death", "Transfer", "LTFU"))
+
+tblBAS[dtg == 1 & rev_outcome_d == dtg_min_pat & rev_outcome  %in% c("Death", "Transfer", "LTFU"), rev_outcome_d := dtg_min_pat + 1]
+# frq(tblBAS, temp)
+```
+
+Patients RIC on same day as starting DTG had outcome day extended by one day to avoid conflicts. 
+
+```{r include=FALSE}
+frq(tblBAS, dtg == 1 & rev_outcome_d == dtg_min_pat & rev_outcome  %in% c("RIC"))
+
+tblBAS[dtg == 1 & rev_outcome_d == dtg_min_pat & rev_outcome  %in% c("RIC"), rev_outcome_d := dtg_min_pat + 1]
+# frq(tblBAS, temp)
+```
+
+## Checks: outcome date > DTG date
+
+DTG initiation date is before outcome date:  
+
+```{r echo=FALSE}
+# View(tblBAS[dtg == 1 & rev_outcome_d == dtg_min_pat, ])
+frq(tblBAS[!is.na(dtg_min_pat), ], rev_outcome_d < dtg_min_pat)
+```
+
+```{r eval=FALSE, include=FALSE}
+#Different outcomes are included but vast majority is in `LTFU` category:  
+# frq(tblBAS[dtg == 1 & rev_outcome_d == dtg_min_pat, ], program)
+frq(tblBAS[!is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat, ], rev_outcome)
+```
+
+```{r eval=FALSE, include=FALSE}
+#Patients who died before starting DTG were removed from the DTG pool. 
+frq(tblBAS, !is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat & rev_outcome == "Death")
+tblBAS[!is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat & rev_outcome == "Death", temp := 1]
+# frq(tblBAS, temp)
+tblBAS[temp == 1, dtg := 0]
+tblBAS[temp == 1, dtg_min_pat := NA]
+tblBAS[, temp := NULL]
+```
+
+```{r eval=FALSE, include=FALSE}
+#Patients who were LTFU or transfer < starting DTG were removed from DTG pool. 
+frq(tblBAS, !is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat & rev_outcome %in% c("LTFU", "Transfer"))
+tblBAS[!is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat & rev_outcome %in% c("LTFU", "Transfer"), temp :=1 ]
+tblBAS[temp == 1, dtg := 0]
+tblBAS[temp == 1, dtg_min_pat := NA]
+tblBAS[, temp := NULL]
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, !is.na(dtg_min_pat) & rev_outcome_d < dtg_min_pat & rev_outcome %in% c("LTFU", "Transfer", "Death") & dtg ==1)
+```
+
+## Check: none missing ART start 
+
+No patients missing ART start date in `tblBAS` (variable `recart_d`) had it imputed from `tblART` calculations (see above):   
+
+```{r echo=FALSE}
+# frq(tblBAS, recart_d_a)
+# frq(tblBAS, is.na(recart_d))
+# View(tblBAS[is.na(recart_d), ])
+
+# frq(tblBAS, is.na(recart_d) & is.na(alt_recart_d))
+frq(tblBAS, is.na(recart_d))
+
+#tblBAS[is.na(recart_d) & !is.na(alt_recart_d), recart_d_a := "IMP"]
+#tblBAS[is.na(recart_d) & !is.na(alt_recart_d), recart_d := alt_recart_d]
+```
+
+## Exclude pat: revised outcome before ART initiation
+
+In cases where there revised outcome occurred before (any) ART initiation **patients were excluded**.    
+
+```{r echo=FALSE}
+# View(tblBAS[rev_outcome_d < recart_d, ])
+# frq(tblBAS[rev_outcome_d < recart_d, ], program)
+# frq(tblBAS[rev_outcome_d < recart_d, ], dtg)
+frq(tblBAS, rev_outcome_d < recart_d)
+```
+
+```{r include=FALSE}
+tblBAS[rev_outcome_d < recart_d, temp := 1]
+# frq(tblBAS, temp)
+tblBAS = tblBAS[is.na(temp), ]
+tblBAS[, temp := NULL]
+
+# exclusion needs to reapplied
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+gc()
+```
+
+## Exclude pat: revised outcome before DTG rollout
+
+In cases where revised outcome occurred before DTG adoption date **patients were excluded**.   
+
+```{r echo=FALSE}
+# View(tblBAS[rev_outcome_d < dtg_min_program, ])
+# frq(tblBAS[rev_outcome_d < dtg_min_program, ], program)
+# frq(tblBAS[rev_outcome_d < dtg_min_program, ], dtg)
+# frq(tblBAS[rev_outcome_d < dtg_min_program, ], rev_outcome)
+frq(tblBAS, rev_outcome_d < dtg_recomend_d)
+```
+
+```{r include=FALSE}
+tblBAS[rev_outcome_d < dtg_recomend_d, temp := 1]
+# frq(tblBAS, temp)
+tblBAS = tblBAS[is.na(temp), ]
+tblBAS[, temp := NULL]
+
+# exclusion needs to reapplied
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+gc()
+```
+
+<!-- ### Checks -->
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[dtg == 1 & rev_outcome == "Death", dtg_min_pat < rev_outcome_d])
+
+frq(tblBAS[dtg == 1 & rev_outcome == "LTFU", dtg_min_pat < rev_outcome_d])
+
+frq(tblBAS[dtg == 1 & rev_outcome == "Transfer", dtg_min_pat < rev_outcome_d])
+
+frq(tblBAS[dtg == 1 & rev_outcome == "RIC", dtg_min_pat < rev_outcome_d])
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Outcomes (Death, Transfer, LTFU, RIC)
+
+```{r echo=FALSE}
+# View(tblBAS[is.na(rev_outcome), ])
+frq(tblBAS, rev_outcome)
+```
+
+
+```{r}
+table1::label(tblBAS$rev_outcome) <- "Outcome regardless of DTG status"
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$rev_outcome,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+## Provided outcome vs revised outcome
+
+Transitions between outcomes:  
+
+```{r echo=FALSE}
+CrossTable(tblBAS$outcome, tblBAS$rev_outcome, prop.chisq = FALSE)
+```
+
+
+
+```{r include=FALSE}
+# frq(tblBAS, rev_outcome)
+
+## Competing outcomes for DTG
+
+tblBAS[, dtg_outcome := NA_integer_]
+
+tblBAS[dtg == 1, dtg_outcome := 1L]
+tblBAS[dtg == 0 & rev_outcome == "Death", dtg_outcome := 2L]
+tblBAS[dtg == 0 & rev_outcome == "LTFU", dtg_outcome := 3L]
+tblBAS[dtg == 0 & rev_outcome == "RIC", dtg_outcome := 0L]
+tblBAS[dtg == 0 & rev_outcome == "Transfer", dtg_outcome := 0L]
+```
+
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, dtg_outcome)
+
+```
+
+## Provided outcome across cohorts 
+
+### Variable X axis
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Provided outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+### Same X axis
+
+```{r eval=FALSE, include=FALSE}
+tblBAS %>%
+  ggplot(aes(x = outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Provided outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program)) +
+  coord_flip()
+```
+
+## Revised outcome across cohorts 
+
+### Variable X axis
+
+```{r echo=FALSE}
+tblBAS %>%
+  ggplot(aes(x = rev_outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Revised outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+### Same X axis
+
+```{r eval=FALSE, include=FALSE}
+tblBAS %>%
+  ggplot(aes(x = rev_outcome)) +
+  geom_bar() +
+  theme_minimal() +
+  xlab("Revised outcome") +
+  ylab("Number of patients") +
+  facet_wrap(vars(program)) +
+  coord_flip()
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Create analysis cohort (cohort1 & cohort2)
+
+Initiation vs Switching: all had revised outcome following ART initiation and national DTG adoption date.
+
+Cohort1 = Initiation: started ART after national DTG adoption date
+
+Cohort2 = Switching: on ART prior to national DTG adoption date
+
+```{r include=FALSE}
+tblBAS = tblBAS[, cohort:=0]
+
+tblBAS = tblBAS[recart_d >= dtg_recomend_d, cohort:=1]
+tblBAS = tblBAS[recart_d < dtg_recomend_d, cohort:=2]
+
+tblBAS = tblBAS[cohort ==1, cohort_txt:= "Initiating"]
+tblBAS = tblBAS[cohort ==2, cohort_txt:= "Switching"]
+
+frq(tblBAS, cohort)
+frq(tblBAS, cohort_txt)
+```
+
+## by programme
+
+```{r echo=FALSE}
+table1::label(tblBAS$cohort_txt) <- "Cohort"
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$cohort_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## by country
+
+```{r echo=FALSE}
+table1::label(tblBAS$cohort_txt) <- "Cohort"
+sjPlot::tab_xtab(tblBAS$country,
+                 tblBAS$cohort_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Update DTG status, first, switch
+
+Initiation: patients starting ART after national DTG adoption who newly start DTG.
+
+
+Transition: patients on ART at national DTG adoption who switch to DTG
+
+
+```{r include=FALSE}
+frq(tblBAS[cohort ==1], dtg)
+frq(tblBAS[cohort ==1], !is.na(dtg_min_pat))
+
+frq(tblBAS[cohort ==2], dtg)
+frq(tblBAS[cohort ==2], !is.na(dtg_min_pat))
+
+tblBAS = tblBAS[,dtg_status:=0]
+tblBAS = tblBAS[,dtg_first:=0]
+tblBAS = tblBAS[,dtg_switch:=0]
+
+
+# Initiation cohort
+# patients newly starting ART after DTG adoption and newly start DTG (regardless of what they switch to later)
+tblBAS = tblBAS[cohort ==1 & !is.na(dtg_min_pat) & dtg_min_pat == recart_d, dtg_status:=1]
+tblBAS = tblBAS[cohort ==1 & !is.na(dtg_min_pat) & dtg_min_pat == recart_d, dtg_first:=1]
+
+frq(tblBAS, dtg_status)
+frq(tblBAS, dtg_first)
+
+# patients newly starting ART after DTG adoption and newly start DTG (regardless of what they switch to later)
+tblBAS = tblBAS[cohort ==1 & !is.na(dtg_min_pat) & dtg_min_pat > recart_d, dtg_status:=3]
+
+frq(tblBAS, dtg_status)
+
+# Transition cohort
+# patients starting ART before DTG adoption and switch to DTG
+tblBAS = tblBAS[cohort ==2 & !is.na(dtg_min_pat) & dtg_min_pat > recart_d, dtg_status:=2]
+tblBAS = tblBAS[cohort ==2 & !is.na(dtg_min_pat) & dtg_min_pat > recart_d, dtg_switch:=1]
+
+frq(tblBAS, dtg_status)
+frq(tblBAS, dtg_switch)
+
+tblBAS = tblBAS[dtg_status==0, dtg_status_txt:= "No DTG"]
+tblBAS = tblBAS[dtg_status==1, dtg_status_txt:= "DTG first"]
+tblBAS = tblBAS[dtg_status==2, dtg_status_txt:= "DTG switch"]
+tblBAS = tblBAS[dtg_status==3, dtg_status_txt:= "later DTG switch"]
+
+tblBAS = tblBAS[dtg_first==0, dtg_first_txt:= "No DTG first"]
+tblBAS = tblBAS[dtg_first==1, dtg_first_txt:= "DTG first"]
+
+tblBAS = tblBAS[dtg_switch==0, dtg_switch_txt:= "No DTG switch"]
+tblBAS = tblBAS[dtg_switch==1, dtg_switch_txt:= "DTG switch"]
+
+frq(tblBAS[cohort ==1], dtg_status_txt)
+frq(tblBAS[cohort ==1], dtg_first_txt)
+
+frq(tblBAS[cohort ==2], dtg_status_txt)
+frq(tblBAS[cohort ==2], dtg_switch_txt)
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, dtg_status_txt)
+```
+
+Among both cohorts
+
+```{r echo=FALSE}
+table1::label(tblBAS$dtg_status_txt) <- "DTG status"
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$dtg_status_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Initiation cohort: newly starting DTG
+
+
+- Patients newly starting DTG after DTG adoption, regardless of whether later switch to DTG.
+
+
+```{r include=FALSE}
+temp1 <- tblBAS %>% filter(cohort ==1)
+frq(temp1, dtg_status)
+
+```
+
+
+```{r echo=FALSE}
+table1::label(temp1$dtg_first_txt) <- "DTG first"
+sjPlot::tab_xtab(temp1$program,
+                 temp1$dtg_first_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Initiation cohort: later switching to DTG
+
+- Patients newly starting DTG after DTG adoption, who later switch to DTG. These are not investigated in initiation cohort.
+
+```{r echo=FALSE}
+table1::label(temp1$dtg_status_txt) <- "DTG status"
+sjPlot::tab_xtab(temp1$program,
+                 temp1$dtg_status_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+## Switching cohort: on ART and switching to DTG
+
+```{r include=FALSE}
+temp2 <- tblBAS %>% filter(cohort ==2)
+frq(temp2, dtg_status_txt)
+```
+
+
+```{r echo=FALSE}
+table1::label(temp2$dtg_switch_txt) <- "DTG switch"
+sjPlot::tab_xtab(temp2$program,
+                 temp2$dtg_switch_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# DTG_final variable 
+
+(0/1) that reflects DTG statusfor each initiation and switching cohorts (regardless of later switching in cohort1).
+
+```{r echo=FALSE}
+
+tblBAS = tblBAS[,dtg_final:=0]
+
+tblBAS = tblBAS[dtg_status==1, dtg_final:= 1]
+
+tblBAS = tblBAS[dtg_status==2, dtg_final:= 1]
+
+frq(tblBAS, dtg_final)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+
+#checks
+test1 <- tblBAS %>% filter(cohort ==1)
+frq(test1, dtg_final)
+frq(test1, dtg_first)
+
+test2 <- tblBAS %>% filter(cohort ==2)
+frq(test2, dtg_final)
+frq(test2, dtg_switch)
+
+```
+
+
+## Initiation cohort: proportion newly starting DTG
+
+```{r echo=FALSE}
+temp4 <- tblBAS %>% filter(cohort ==1)
+
+sjPlot::tab_xtab(temp4$program,
+                 temp4$dtg_final,
+                 show.row.prc = TRUE, show.summary = FALSE)
+
+```
+
+## Switching cohort: proportion switching to DTG
+
+```{r echo=FALSE}
+temp4 <- tblBAS %>% filter(cohort ==2)
+
+sjPlot::tab_xtab(temp4$program,
+                 temp4$dtg_final,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Program eligibility criteria
+
+
+## List of programs currently included.
+
+```{r echo=FALSE}
+
+compare_dtg_dates = tblBAS %>% select(country, program, dtg_min_program, dtg_recomend_d, max_close_d) %>% 
+  unique() %>% mutate(time_dtg = max_close_d - dtg_min_program)
+
+compare_dtg_dates %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+Find programs where DTG data prior to national adoption date **(don't exclude!)**
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[dtg_min_program < dtg_recomend_d], program)
+```
+
+```{r eval=FALSE, include=FALSE}
+tblBAS = tblBAS[dtg_recomend_d <= dtg_min_program,]
+```
+
+Initiation cohort
+```{r}
+frq(tblBAS[cohort ==1], program)
+```
+
+Switching cohort
+```{r}
+frq(tblBAS[cohort ==2], program) 
+
+```
+
+
+## Find programs <24 months of DTG data and exclude 
+
+
+```{r echo=TRUE}
+frq(tblBAS[max_close_d - dtg_recomend_d < 730], program)
+```
+
+
+Patients in cohort ==1 (initiation) from programs <24 months 
+```{r}
+frq(tblBAS[max_close_d - dtg_recomend_d < 730 & cohort ==1], program)
+```
+
+Patients in cohort ==2 (switching) from programs <24 months 
+```{r}
+frq(tblBAS[max_close_d - dtg_recomend_d < 730 & cohort ==2], program)
+```
+
+CIDRZ Patients aged 20-39 years:
+
+```{r}
+temp_tblBAS_CIDRZ <- tblBAS %>% filter(age_cat1 == "[20,30)" | age_cat1 =="[30,40)") %>% filter(program =="CIDRZ")
+
+frq(temp_tblBAS_CIDRZ, cohort_txt)
+```
+
+
+
+Exclude programs with <24 months of data since national DTG adoption.
+
+```{r}
+tblBAS = tblBAS[max_close_d - dtg_recomend_d >= 730,]
+```
+
+After exclusion:
+
+Initiation cohort
+```{r}
+frq(tblBAS[cohort ==1], program)
+```
+
+Switching cohort
+```{r}
+frq(tblBAS[cohort ==2], program) 
+
+```
+
+CIDRZ Patients aged 20-39 years:
+
+```{r}
+temp_tblBAS_CIDRZ <- tblBAS %>% filter(age_cat1 == "[20,30)" | age_cat1 =="[30,40)") %>% filter(program =="CIDRZ")
+
+frq(temp_tblBAS_CIDRZ, cohort_txt)
+```
+
+
+Initiation cohort
+```{r}
+frq(tblBAS[cohort ==1], program)
+```
+
+Switching cohort
+```{r}
+frq(tblBAS[cohort ==2], program) 
+
+```
+
+
+
+
+## Find programs <100 patients and exclude 
+
+```{r}
+tblBAS[, temp := 1]
+tblBAS[, npat := .(count = .N), by = program]
+```
+
+
+```{r}
+frq(tblBAS[npat <100], program)
+```
+
+Exclude programs providing data on <100 patients.
+
+```{r}
+tblBAS = tblBAS[npat >=100 & !is.na(npat),]
+
+```
+
+
+## Programs
+
+```{r echo=FALSE}
+tblBAS %>% select(country, program, dtg_recomend_d, dtg_min_program, max_close_d) %>%
+  group_by(program) %>%
+  mutate(npat=n()) %>%
+  unique() %>% mutate(time_since_dtg_adoption = max_close_d - dtg_recomend_d) %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+```{r include=FALSE}
+# exclusion needs to applied to other tables
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+tblART_start = tblART_start[patient %in% tblBAS$patient, ]
+```
+
+## Patients by program
+
+```{r echo=TRUE}
+#final number of patients
+frq(tblBAS, program)
+
+```
+
+
+## Patients by DTG status
+
+```{r}
+frq(tblBAS, dtg_status_txt)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Follow-up
+
+## FU start
+
+follow up start
+
+```{r include=FALSE}
+stopifnot(nrow(tblBAS[is.na(recart_d), ]) == 0)
+tblBAS[, start_fu := as.Date(NA)]
+```
+
+[Start of FU](https://github.com/RPanczak/IeDEA_DTG/issues/51) is defined as:  
+
+Definition: Latest of ART start date or the national DTG adoption date.
+
+
+```{r eval=FALSE, include=FALSE}
+
+# compare data-driven DTG min date with official DTG min date
+
+compare_dtg_dates = tblBAS %>% select(country, program, dtg_recomend_d, dtg_min_program, max_close_d) %>% 
+unique() %>% mutate(time_dtg = max_close_d - dtg_recomend_d)
+
+frq(compare_dtg_dates, max_close_d - dtg_recomend_d > 180)
+
+compare_dtg_dates %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# number of patients who initiated DTG after to national adoption
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==1], program)
+
+# number of patients who started ART prior to national DTG adoption, but then switched to DTG
+frq(tblBAS[recart_d < dtg_recomend_d & dtg_status ==2], program)
+
+# number of patients who started ART after national adoption, but then switched to DTG
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==2], program)
+
+# number of patients who started ART after adoption, but didn't initiate DTG
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==0], program)
+
+# number of patients who started ART prior to national adoption, but didn't switch to DTG 
+frq(tblBAS[recart_d < dtg_recomend_d & dtg_status ==0], program)
+
+```
+
+
+### Initiating cohort 
+
+started ART on or after national adoption date, so FU start == ART start
+
+```{r}
+# start ART after national adoption date
+tblBAS[cohort ==1 & recart_d >= dtg_recomend_d, start_fu := recart_d]
+```
+
+
+### Switching cohort 
+
+all on ART prior to national adoption date, so start_fu == dtg_recomend_d
+
+```{r}
+# on ART prior or on national adoption date
+tblBAS[cohort ==2 & recart_d < dtg_recomend_d, start_fu := dtg_recomend_d]
+```
+
+```{r}
+stopifnot(tblBAS[, all(!is.na(start_fu))])
+```
+
+
+
+## FU end
+
+Follow up end
+
+```{r include=FALSE}
+tblBAS[, end_fu := as.Date(NA)]
+```
+
+### Initiating cohort 
+
+FU end is ART start + 1
+
+```{r}
+tblBAS[cohort ==1 & recart_d >= dtg_recomend_d, end_fu := recart_d + 1]
+```
+
+
+### Switching cohort: if switched
+
+then FU end is the DTG switch date + 1  
+
+```{r}
+
+tblBAS[cohort ==2 & recart_d < dtg_recomend_d & dtg_final == 1, end_fu := dtg_min_pat + 1]
+```
+
+## Switching cohort: if no switch
+
+then FU end is rev_outcome date.
+
+For patients who never switched to DTG, end of FU is the `rev_outcome_d` for those with outcome, and `max_close_d` for those who are RIC.
+
+```{r}
+tblBAS[cohort ==2 & recart_d < dtg_recomend_d & dtg_final == 0, end_fu := rev_outcome_d]
+```
+
+
+## FU time
+
+Definition: FU is then simple numeric difference between FU start and FU end in days. 
+Also calculated in months and years.   
+
+```{r include=FALSE}
+tblBAS[, FU_day := as.numeric(end_fu - start_fu)]
+tblBAS[, FU_month := round(as.numeric(end_fu - start_fu) / (365.25 / 12), 1)]
+tblBAS[, FU_year := round(as.numeric(end_fu - start_fu) / (365.25), 1)]
+```
+
+
+<!-- ### No FU at all  -->
+
+<!-- Patients with revised outcome occurring after the DTG index date have FU set to `NA`.   -->
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, rev_outcome_d < start_fu)
+```
+
+```{r eval=FALSE, include=FALSE}
+# tblBAS[rev_outcome_d < start_fu, FU_day := NA]
+# tblBAS[rev_outcome_d < start_fu, FU_month := NA]
+# tblBAS[rev_outcome_d < start_fu, FU_year := NA]
+```
+
+<!-- ### Exclusion: FU start after revised close date  -->
+
+<!-- **In cases where start of FU was found to be after `max_close_d` patients were excluded!**   -->
+
+```{r eval=FALSE, include=FALSE}
+# frq(tblBAS, start_fu > rev_close_d)
+frq(tblBAS, start_fu > max_close_d)
+
+frq(tblBAS, start_fu <= max_close_d)
+```
+
+```{r eval=FALSE, include=FALSE}
+# frq(tblBAS, is.na(start_fu))
+# frq(tblBAS, is.na(rev_close_d))
+# frq(tblBAS, is.na(close_d))
+
+# tblBAS = tblBAS[ start_fu <= rev_close_d, ]
+tblBAS = tblBAS[start_fu <= max_close_d, ]
+
+# exclusion needs to reapplied
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+gc()
+```
+
+### Zero FU time
+
+Patients with follow up time being `0`  
+
+- Initiating cohort: Among those who started DTG, there are none:
+
+```{r echo=FALSE}
+# View(tblBAS[FU_day == 0, ])
+
+# View(tblBAS[FU_day == 0, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d")])
+
+# View(tblBAS[FU_day == 0 & recart_d != rev_outcome_d, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d")])
+
+frq(tblBAS[cohort ==1, ], FU_day == 0 & dtg_final ==1)
+```
+
+- Initiating cohort: Among those who never started DTG:
+
+```{r echo=FALSE}
+frq(tblBAS[cohort ==1, ],  FU_day == 0 & dtg_final ==0)
+
+test1 <- tblBAS %>% filter(FU_day == 0 & dtg_final ==0) %>% select(patient, program, country, cohort, recart_d, dtg_recomend_d, rev_outcome, rev_outcome_d, last_enc_d, dtg_min_pat, dtg_status_txt, FU_day)
+```
+
+
+- Switching cohort: Among those who switched to DTG, there are none:
+
+```{r echo=FALSE}
+# View(tblBAS[FU_day == 0, ])
+
+# View(tblBAS[FU_day == 0, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d")])
+
+# View(tblBAS[FU_day == 0 & recart_d != rev_outcome_d, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d")])
+
+frq(tblBAS[cohort ==2, ], FU_day == 0 & dtg_final ==1)
+```
+
+- Switching cohort: Among those who never switched to DTG:
+
+```{r echo=FALSE}
+frq(tblBAS[cohort ==2, ],  FU_day == 0 & dtg_final ==0)
+
+test1 <- tblBAS %>% filter(FU_day == 0 & dtg_final ==0) %>% select(patient, program, country, cohort, recart_d, dtg_recomend_d, rev_outcome, rev_outcome_d, last_enc_d, dtg_min_pat, dtg_status_txt, FU_day)
+```
+
+
+Caused by coincidence of `rev_outcome_d` and same as `dtg_recomend_d`
+
+```{r echo=FALSE}
+frq(tblBAS[cohort ==2 & FU_day == 0, ], dtg_recomend_d == rev_outcome_d)
+```
+
+Majority in `KHETHIMPILO`  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day == 0, ], program)
+```
+
+Luckily - none among DTG patients  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day == 0, ], dtg_final)
+```
+
+Outcomes among patients with zero FU  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day == 0, ], rev_outcome)
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[FU_day == 0, ], outcome)
+```
+
+**Conservative option (until better solution is found) is to remove these patients.**  
+
+```{r include=FALSE}
+tblBAS = tblBAS[FU_day != 0, ]
+
+# exclusion needs to reapplied
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+gc()
+```
+
+### Exclusion: negative FU
+
+There are no patients with follow up time below `0`  
+
+```{r echo=FALSE}
+# View(tblBAS[FU_day < 0, ])
+
+# View(tblBAS[FU_day < 0, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d", "FU_day")])
+
+# View(tblBAS[FU_day < 0 & recart_d != rev_outcome_d, c("patient", "program", "dtg", "recart_d", "dtg", "dtg_min_program", "dtg_min_pat", "rev_outcome", "rev_outcome_d", "outcome", "outcome_d", "max_close_d", "last_enc_d", "FU_day")])
+
+frq(tblBAS, FU_day < 0)
+```
+
+Majority in `CIDRZ`  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day < 0, ], program)
+```
+
+*None* among DTG patients  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day < 0, ], dtg)
+```
+
+The problem here is caused by most likely erroneous `recart_d` variable that is larger than patient's DTG initiation date.  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day < 0, ], dtg_min_pat < recart_d)
+```
+
+Outcomes among patients with negative FU  
+
+```{r echo=FALSE}
+frq(tblBAS[FU_day < 0, ], rev_outcome)
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS[FU_day < 0, ], outcome)
+```
+
+**Conservative option (until better solution is found) is to remove these patients.**  
+
+```{r eval=FALSE, include=FALSE}
+tblBAS = tblBAS[FU_day > 0, ]
+
+# exclusion needs to reapplied
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+gc()
+```
+
+### FU results per cohort  
+
+```{r echo=FALSE}
+ggplot(
+  tblBAS[FU_day >= 0],
+  aes(x = FU_day)
+) +
+  geom_histogram(binwidth = 30) +
+  facet_wrap(vars(program), scales = "free_y") +
+  theme_minimal() +
+  xlab("FU in days") +
+  ylab("Number of patients")
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Last checks/exclusions
+
+## Check: if minimum `art_sd` before `recart_d` 
+
+Issue discussed in [#101](https://github.com/IeDEA-SA/IeDEA_DTG/issues/101).  
+
+```{r include=FALSE}
+gc()
+# temp = tblART_start[ndrugs >= 3, .(patient, art_sd)][, .SD[which.min(art_sd)], by = patient]
+ ART_temp = tblART[, .(patient, art_sd)][ , .SD[which.min(art_sd)], by = patient]
+ tblBAS_temp = tblBAS
+ #tblBAS_temp[, art_sd := NULL]
+ #temp1 = merge(tblBAS_temp, ART_temp, by = c("patient"), all.x = TRUE)
+ 
+ temp1 = tblBAS_temp[, .(patient, program, rev_outcome, dtg, recart_d)][ART_temp, on = "patient", mult = "first"]
+ temp1 = temp1[!is.na(program),] ## only keep patients that are in tblBAS
+ temp1[, diff := recart_d - art_sd]
+ 
+ cohort = tblBAS[, .(patient, cohort)]
+  temp1 = cohort[,.(patient, cohort)][temp1, on="patient"]
+
+# temp1 = as.data.table(temp1)
+```
+
+There are patients with ART records that happened earlier than 'official' ART start date:  
+
+Initiation cohort
+
+```{r echo=FALSE}
+# View(temp[!is.na(art_sd) & art_sd < recart_d, ], )
+frq(temp1[cohort ==1, ], !is.na(art_sd) & !is.na(recart_d) & art_sd +7 < recart_d)
+
+```
+
+Summary of difference between dates:  
+
+```{r echo=FALSE}
+with(temp1[cohort ==1 & !is.na(art_sd) & art_sd +7 < recart_d, ], summary(as.numeric(diff)))
+with(temp1[cohort ==1 & !is.na(art_sd) & art_sd +7 < recart_d, ], hist(as.numeric(diff), breaks = 50))
+```
+
+
+Transition cohort
+
+```{r echo=FALSE}
+frq(temp1[cohort ==2, ], !is.na(art_sd) & !is.na(recart_d) & art_sd +7 < recart_d)
+```
+
+
+Summary of difference between dates:  
+
+```{r echo=FALSE}
+with(temp1[cohort ==2 & !is.na(art_sd) & art_sd +7 < recart_d, ], summary(as.numeric(diff)))
+with(temp1[cohort ==2 & !is.na(art_sd) & art_sd +7 < recart_d, ], hist(as.numeric(diff), breaks = 50))
+```
+
+Needless to say it varies by program:  
+
+```{r echo=FALSE}
+temp1[!is.na(art_sd), earlier_art := 0]
+temp1[!is.na(art_sd) & !is.na(recart_d) & art_sd +7 < recart_d, earlier_art := 1]
+
+CrossTable(temp1$program, temp1$earlier_art,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+Also by the fact of having DTG record or not and revised outcome:  
+
+```{r eval=FALSE, include=FALSE}
+CrossTable(temp1$dtg, temp1$earlier_art,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+
+CrossTable(temp1$rev_outcome, temp1$earlier_art,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+Matt also had some issues with it:
+
+> I found that `recart_d` needs some modifications. I cross checked it with `tblART` as there are times when people start an ART regimen and the `art_sd` is before `recart_d`. There are some issues that might be unsolvable... for me, knowing if someone was treatment naive or experienced at the start of follow-up was really important for my analysis (based on `naive_y`, `enrol_d` `recart_d` and the index date) So, I wound up dropping people where it was impossible to determine this, which was luckily a very small proportion.
+
+
+
+
+## Check: 'missing' `art_sd`  
+
+Additionally we have patients missing `art_sd` completely:  
+
+```{r echo=FALSE}
+# View(temp[art_sd < recart_d, ], )
+# View(temp[is.na(art_sd), ], )
+
+frq(temp1, is.na(art_sd))
+```
+
+They do have `recart_d` though:  
+
+```{r echo=FALSE}
+frq(temp1[is.na(art_sd), ], is.na(recart_d))
+```
+
+Needless to say it varies by program:  
+
+```{r echo=FALSE}
+temp1[!is.na(art_sd), no_art_sd := 0]
+temp1[is.na(art_sd), no_art_sd := 1]
+
+CrossTable(temp1$program, temp1$no_art_sd,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+Also by the fact of having DTG record or not and revised outcome:  
+
+```{r eval=FALSE, include=FALSE}
+CrossTable(temp1$dtg, temp1$no_art_sd,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+
+CrossTable(temp1$rev_outcome, temp1$no_art_sd,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+- Exclusion: inconsitent `art_sd` & `recart_d`  
+
+Exclude if ART more than 7 days before recart_d
+
+```{r}
+frq(temp1, earlier_art)
+```
+
+
+**Conservative option (until better solution is found) is to remove these two groups of patients (`r nrow(tblBAS) - nrow(tblBAS[patient %in% temp1$patient, ])` in total).**  
+
+```{r include=FALSE}
+temp1 = temp1[earlier_art == 0 & no_art_sd == 0, ]
+
+tblBAS = tblBAS[patient %in% temp1$patient, ]
+
+# exclusion needs to reapplied
+tblART = tblART[patient %in% tblBAS$patient, ]
+tblVIS = tblVIS[patient %in% tblBAS$patient, ]
+tblLAB_RNA = tblLAB_RNA[patient %in% tblBAS$patient, ]
+tblLAB_CD4 = tblLAB_CD4[patient %in% tblBAS$patient, ]
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblCLIN = tblCLIN[patient %in% tblBAS$patient, ]
+gc()
+```
+
+```{r include=FALSE}
+rm(temp); rm(temp1); gc()
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+# Final patients included
+
+
+## Initiating cohort
+
+
+```{r echo=TRUE}
+#final number of patients
+frq(tblBAS[cohort ==1], program)
+
+```
+
+
+## Switching cohort
+
+```{r}
+frq(tblBAS[cohort ==2], program)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Final patients by DTG status
+
+
+```{r}
+frq(tblBAS, cohort_txt)
+```
+
+
+## Initiating cohort
+
+```{r echo=FALSE}
+frq(tblBAS[cohort ==1], dtg_first_txt)
+```
+
+
+## Switching cohort
+
+```{r echo=FALSE}
+frq(tblBAS[cohort ==2], dtg_switch_txt)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# number of patients who initiated DTG after to national adoption
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==1], program)
+
+# number of patients who started ART prior to national DTG adoption, but then switched to DTG
+frq(tblBAS[recart_d < dtg_recomend_d & dtg_status ==2], program)
+
+# number of patients who started ART after national adoption, but then switched to DTG
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==2], program)
+
+# number of patients who started ART after adoption, but didn't initiate DTG
+frq(tblBAS[recart_d >= dtg_recomend_d & dtg_status ==0], program)
+
+# number of patients who started ART prior to national adoption, but didn't switch to DTG 
+frq(tblBAS[recart_d < dtg_recomend_d & dtg_status ==0], program)
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Saving data 
+
+## Local  
+
+This state of data is preserved in `data` directory. `fst` files for R and `dta` files for Stata are saved.    
+
+```{r}
+write_fst(tblBAS, "data_temp/tblBAS_v005_LTFU_WHO.fst")
+# tblBAS = data.table(read_fst("data_temp/tblBAS_v005_LTFU_WHO.fst"))
+
+write_fst(tblLTFU, "data_temp/tblLTFU_v005_LTFU_WHO.fst")
+# tblLTFU = data.table(read_fst("data_temp/tblLTFU_v005_LTFU_WHO.fst"))
+
+write_fst(tblART, "data_temp/tblART_v005_LTFU_WHO.fst")
+# tblART = data.table(read_fst("data_temp/tblART_v005_LTFU_WHO.fst"))
+
+write_fst(tblLAB_RNA, "data_temp/tblLAB_RNA_v005_LTFU_WHO.fst")
+# tblLAB_RNA = data.table(read_fst("data_temp/tblLAB_RNA_v005_LTFU_WHO.fst"))
+
+write_fst(tblLAB_CD4, "data_temp/tblLAB_CD4_v005_LTFU_WHO.fst")
+# tblLAB_CD4 = data.table(read_fst("data_temp/tblLAB_CD4_v005_LTFU_WHO.fst"))
+
+write_fst(tblVIS, "data_temp/tblVIS_v005_LTFU_WHO.fst")
+# tblVIS = data.table(read_fst("data_temp/tblVIS_v005_LTFU_WHO.fst"))
+
+write_fst(tblCLIN, "data_temp/tblCLIN_v005_LTFU_WHO.fst")
+# tblCLIN = data.table(read_fst("data_temp/tblCLIN_v005_LTFU_WHO.fst"))
+
+write_fst(tblART_start, "data_temp/tblART_start_v005_LTFU_WHO.fst")
+# tblART_start = data.table(read_fst("data_temp/tblART_start_v005_LTFU_WHO.fst"))
+
+write_fst(compare_dtg_dates, "data_temp/compare_dtg_dates_v005_LTFU_WHO.fst")
+# compare_dtg_dates = data.table(read_fst("data_temp/compare_dtg_dates_v005_LTFU_WHO.fst"))
+
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Content & missings
+
+## `tblBAS`
+
+```{r echo=FALSE}
+skimr::skim(tblBAS[,.SD, .SDcols = !c("age_cat1", "age_cat2")])
+```
+
+```{r echo=FALSE, message=FALSE}
+visdat::vis_miss(tblBAS[,.SD, .SDcols = !c("patient", "program", "age_cat1", "age_cat2")],
+                 warn_large_data = FALSE)
+```
+
+## `tblART_end`
+
+```{r echo=FALSE}
+#skimr::skim(tblART_end)
+```
+
+## `tblLAB_CD4`
+
+```{r echo=FALSE}
+skimr::skim(tblLAB_CD4)
+```
+
+## `tblLAB_RNA`
+
+```{r echo=FALSE}
+skimr::skim(tblLAB_RNA)
+```
+
+## `tblVIS`
+
+```{r echo=FALSE}
+skimr::skim(tblVIS)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report::report(sessionInfo())
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+## Data upload to osf
+
+Authentication  
+
+```{r osf-auth, eval=FALSE, include=FALSE}
+osf_auth(readr::read_file("secrets/osf_pat.txt"))
+```
+
+Project for DTG  
+
+```{r eval=FALSE, include=FALSE}
+project = osf_retrieve_node("7dxvs")
+project
+```
+
+Nodes (ie. components) of the project  
+
+```{r eval=FALSE, include=FALSE}
+project %>%
+  osf_ls_nodes() 
+```
+
+Upload data
+
+```{r eval=FALSE, include=FALSE}
+upload_location = project %>%
+  osf_ls_nodes("Data") 
+
+osf_upload(upload_location, 
+           path = "data", 
+           recurse = TRUE, conflicts = "overwrite",
+           verbose = TRUE)
+```
+
+<!-- Now `data-raw` (if needed)   -->
+
+```{r eval=FALSE, include=FALSE}
+osf_upload(upload_location, 
+           path = "data-raw", 
+           recurse = TRUE, conflicts = "overwrite",
+           verbose = TRUE)
+```

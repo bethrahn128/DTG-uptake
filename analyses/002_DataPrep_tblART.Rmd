@@ -1,0 +1,1905 @@
+---
+title: "SA256 DTG uptake <br> tblART"
+subtitle: " "
+author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::robobook:
+    code_folding: show
+    self_contained: true
+    highlight: pygments
+    keep_md: no
+    toc_depth: 3
+editor_options: 
+  chunk_output_type: console
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "docs") })
+---
+
+```{r r-setup, include = FALSE}
+options(scipen = 999)
+options(max.print = "75")
+set.seed(12345)
+
+library(pacman)
+p_load(
+  kableExtra,
+  scales, ggplot2, dplyr,
+  fst, data.table, sjmisc,
+  osfr
+)
+
+import::from("psych", "geometric.mean")
+import::from("sjmisc", "frq")
+import::from("gmodels", "CrossTable")
+```
+
+```{r conflicts, include = FALSE}
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+
+knitr::opts_chunk$set(
+  cache = FALSE,
+  prompt = FALSE,
+  tidy = FALSE,
+  comment = NA,
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+knitr::opts_knit$set(width = 75)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r}
+#Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+```
+
+
+
+# IeDEA-SA Data Prep
+
+Raw Stata and `fst` files come from central directory of `IeDEA_core`.  
+
+Using release `Stata_202308_Aug`.  
+
+```{r eval=FALSE, include=FALSE}
+list.files("../IeDEA_core/data/Stata_202308_Aug/", pattern = "\\.fst$") %>%
+  kable(col.names = "Datasets - new") %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = F
+  )
+```
+
+## Druglist
+
+Updated `druglist` dataset from the `ART-codes` repo.   
+
+```{r include=FALSE}
+druglist = data.table(readr::read_csv("https://raw.githubusercontent.com/IeDEA-SA/ART-codes/main/data-raw/IeDEA_druglist.csv"))[, c("drug_orig") := NULL]
+
+druglist[, drug := trimws(drug, which = "both")]
+```
+
+```{r echo=FALSE}
+druglist %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+```{r include=FALSE}
+druglist = druglist[, .(art_id, drug, arv_class)]
+```
+
+## Official DTG adoption dates
+
+Pulled by @aezaniewski from different sources.  
+
+```{r include=FALSE}
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+```
+
+```{r echo=FALSE}
+dtg_recomend %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+```{r}
+
+dtg_recomend = data.table(read_fst("data_temp/dtg_recomend_v001.fst"))
+
+rev_close_d = data.table(read_fst("data_temp/rev_close_d_v001.fst"))
+
+program_close_d = data.table(read_fst("data_temp/program_close_d_v001.fst"))
+
+tblCENTER = data.table(read_fst("data_temp/tblCENTER_v001.fst"))
+
+tblBAS = data.table(read_fst("data_temp/tblBAS_v001.fst"))
+
+tblLTFU = data.table(read_fst("data_temp/tblLTFU_v001.fst"))
+
+
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# `tblART`
+
+```{r}
+tblART = data.table(read_fst("../IeDEA_core/data/Stata_202308_Aug/tblART.fst"))[, c("art_form") := NULL]
+```
+
+```{r}
+ARTpat = unique(tblART[, .(patient)])
+rm(ARTpat)
+```
+
+
+Starting point is `r number(nrow(tblART), big.mark = ",")` ART records of `r number(length(unique(tblART$patient)), big.mark = ",")` patients from all combined cohorts.  
+
+## BAS overlap   
+
+- retaining ARTs of patients retained in `tblBAS` only  
+
+```{r}
+tblART = merge(tblBAS[, .(patient, program, recart_d, country, DM)],
+               tblART,
+               by = "patient",
+               all.x = FALSE, all.y = FALSE
+)
+
+setorder(tblART, patient, art_sd)
+```
+
+- brings the number down to `r number(nrow(tblART), big.mark = ",")` ART records  
+
+## `close_d` 
+
+Program level, maximum `close_d` was brought from revised close dates.  
+
+```{r echo=FALSE}
+tblART = merge(tblART, program_close_d, by = "program",
+               all.x = TRUE, all.y = FALSE)
+```
+
+## Recoding implausible dates
+
+- recoding treatments with implausible *start dates* (anything `< 1933`) from `art_sd` variable to `NA`s
+
+```{r echo=FALSE}
+# View(tblART[year(art_sd) < 1933, ])
+frq(tblART, year(art_sd))
+frq(tblART, year(art_sd) < 1933)
+```
+
+```{r include=FALSE}
+tblART[year(art_sd) < 1933, art_sd_a := "U"]
+tblART[year(art_sd) < 1933, art_sd := NA]
+```
+
+- recoding treatment *start date* to NAs if bigger than today.
+
+```{r echo=FALSE}
+# View(tblART[art_sd >= Sys.Date(), ])
+frq(tblART, art_sd >= Sys.Date())
+```
+
+```{r include=FALSE}
+tblART[art_sd >= Sys.Date(), art_sd_a := "U"]
+tblART[art_sd >= Sys.Date(), art_sd := NA]
+```
+
+- recoding treatment *end date* to NA if start date == end date 
+
+```{r echo=FALSE}
+# View(tblART[!is.na(art_sd) & !is.na(art_ed) & art_sd == art_ed, ])
+frq(tblART, !is.na(art_sd) & !is.na(art_ed) & art_sd == art_ed)
+```
+
+```{r include=FALSE}
+tblART[!is.na(art_sd) & !is.na(art_ed) & art_sd == art_ed, art_ed_a := "U"]
+tblART[!is.na(art_sd) & !is.na(art_ed) & art_sd == art_ed, art_ed := NA]
+```
+
+- recoding treatment *end date* to NA if having start date > end date 
+
+```{r eval=FALSE, include=FALSE}
+errors = tblART[!is.na(art_ed) & art_sd > art_ed, ]
+errors$diff = as.numeric(errors$art_sd - errors$art_ed)
+summary(errors$diff)
+
+# alternative remove with kinda anti join
+# tblART = setDT(tblART)[!errors, on = c("patient", "program", "art_id", "art_sd", "art_ed")]
+
+rm(errors); gc()
+```
+
+```{r echo=FALSE}
+# View(tblART[!is.na(art_ed) & art_sd > art_ed, ])
+frq(tblART, !is.na(art_ed) & art_sd > art_ed)
+```
+
+```{r include=FALSE}
+tblART[!is.na(art_ed) & art_sd > art_ed, art_ed_a := "U"]
+tblART[!is.na(art_ed) & art_sd > art_ed, art_ed := NA]
+```
+
+- note: there are treatments with *end date* bigger than today -- this is feasible
+
+```{r echo=FALSE}
+# View(tblART[art_ed >= Sys.Date(), ])
+frq(tblART, art_ed >= Sys.Date())
+```
+
+## Exclusion: ART with missing dates 
+
+- treatments with missing start date  
+
+```{r echo=FALSE}
+# View(tblART[is.na(art_sd), ])
+frq(tblART, is.na(art_sd))
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[is.na(art_sd), ][, .(patient, program)])
+```
+
+- patients with ART missing start date across programs
+
+```{r echo=FALSE}
+frq(exclude, program)
+```
+
+```{r include=FALSE}
+exclude[, program := NULL]
+```
+
+- `r nrow(exclude)` patients with any ART record missing starting date were excluded.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+rm(exclude); gc()
+```
+
+## Exclusion: ART with imprecise dates 
+
+- treatments with unknown or yearly precision start dates (using `recart_d_a`)  
+
+```{r echo=TRUE}
+frq(tblART, art_sd_a)
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[art_sd_a %in% c("Y", "U"), ][, .(patient, program)])
+```
+
+- patients with ART imprecise start date across programs
+
+```{r echo=FALSE}
+frq(exclude, program)
+```
+
+```{r include=FALSE}
+exclude[, program := NULL]
+```
+
+- `r nrow(exclude)` patients with any ART record missing starting date were excluded.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+rm(exclude); gc()
+```
+
+```{r include=FALSE}
+tblART[, art_sd_a := NULL]
+tblART[, art_ed_a := NULL]
+```
+
+
+## Exclusion: ARTs starting after `max_close_d` 
+
+- removing *treatments* (**not patients!**) that started after official close dates of the cohort (`max_close_d`)  
+
+```{r echo=FALSE}
+# View(tblART[art_sd > max_close_d, ])
+frq(tblART, art_sd > max_close_d)
+```
+
+```{r include=FALSE}
+tblART = tblART[art_sd <= max_close_d, ]
+```
+
+## Exclusion: ART starting before 2004  
+
+- treatments that started before `2004-01-01` (`art_sd`)
+
+```{r echo=FALSE}
+# View(tblART[art_sd < as.Date("2004-01-01"), ])
+frq(tblART, art_sd < as.Date("2004-01-01"))
+```
+
+- majority in AfA:  
+
+```{r echo=FALSE}
+frq(tblART[art_sd < as.Date("2004-01-01"), ], program)
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblART[art_sd < as.Date("2004-01-01"), ], art_id, sort.frq = "desc")
+frq(tblART[art_sd < as.Date("2004-01-01"), ], year(art_sd))
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[art_sd < as.Date("2004-01-01"), ][, .(patient, program)])
+```
+
+- patients with ART start date <2004 across programs
+
+```{r echo=FALSE}
+frq(exclude, program)
+```
+
+```{r include=FALSE}
+exclude[, program := NULL]
+```
+
+- `r nrow(exclude)` patients with any ART starting before 2004 were excluded  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+rm(exclude); gc()
+```
+
+## Convert from ART id to drug codes
+
+Linking to `IeDEA_druglist`    
+
+```{r include=FALSE}
+tblART = merge(tblART, druglist, by = "art_id")
+rm(druglist); gc()
+```
+
+Original `art_id`:
+
+```{r echo=FALSE}
+frq(tblART, art_id, sort.frq = "desc")
+```
+
+Is translated to *individual & combination* drug codes:  
+
+```{r echo=FALSE}
+frq(tblART, drug, sort.frq = "desc")
+```
+
+## Exclusion: undefined treatments
+
+We have treatments with `XX1` & `XX2` drug codes (belonging to *ART unspecified*, *PI unspecified*, or *Participant in Blinded Trial*).  
+
+```{r echo=FALSE}
+# frq(tblART, drug == "XX1")
+# frq(tblART, drug == "XX2")
+frq(tblART, drug == "XX2" | drug == "XX1")
+```
+
+Three ARTs are included in this group:  
+
+```{r echo=FALSE}
+# frq(tblART[drug == "XX1", ], art_id)
+# frq(tblART[drug == "XX2", ], art_id)
+frq(tblART[drug == "XX2" | drug == "XX1", ], art_id)
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[drug == "XX2" | drug == "XX1", ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with any `XX1` & `XX2` drug codes records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+rm(exclude); gc()
+```
+
+## Exclusion: patients without any ART records
+
+```{r include=FALSE}
+# patients with any art
+include = unique(tblART[, .(patient)])
+
+# anti join - so patients without any art here
+no_art = setDT(tblBAS)[!include, on = "patient"][, enrol_y := year(enrol_d)]
+```
+
+There are `r number(nrow(no_art), big.mark = ",")` patients from all combined cohorts *without any ART record*! Lack of ART in this case is defined as lack of records in `tblART`. Also discussed in issue [27](https://github.com/IeDEA-SA/IeDEA_data-quality/issues/27).    
+
+```{r eval=FALSE, include=FALSE}
+frq(no_art, program)
+frq(no_art, recart_y)
+# frq(no_art[country == "ZAF", ], program)
+```
+
+```{r include=FALSE}
+# subset for tabs
+temp = merge(tblBAS[, .(patient, program, recart_y)],
+             no_art[, .(patient)][, no_art := 1],
+             by = "patient",
+             all.x = TRUE, all.y = TRUE
+)
+
+temp[is.na(no_art), no_art := 0]
+```
+
+Overview of patients across cohort where 1 == patient not in tblART:  
+
+```{r echo=FALSE}
+CrossTable(temp$program, temp$no_art,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+Patients not in tblART across cohort & enrolment year from 2004 onwards (will exclude these patients):  
+
+```{r echo=FALSE}
+no_art = no_art[!program %in% c("SMARTLES", "SMARTMOZ", "SMARTZIM"), ]
+
+ggplot(no_art[!is.na(enrol_y) & enrol_y >= 2004, ]) +
+  geom_histogram(aes(x = factor(enrol_y)), stat = "count") +
+  facet_wrap(vars(program), scales = "free_x") +
+  coord_flip()
+```
+
+
+**Patients not in tblART are excluded!**.  
+
+```{r include=FALSE}
+tblBAS = setDT(tblBAS)[include, on = c("patient")]
+```
+
+```{r include=FALSE}
+# repeat on LTFU
+tblLTFU = setDT(tblLTFU)[include, on = c("patient")]
+
+rm(include, no_art, temp); gc()
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Number of patients in tblBAS
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# DTG identification
+
+Flagging DTG treatments by individual drug codes
+
+```{r}
+tblART[, dtg := 0]
+tblART[drug %like% "DTG", dtg := 1]
+```
+
+Treatments included:  
+
+```{r echo=FALSE}
+frq(tblART[dtg ==1, ], art_id)
+```
+
+
+## DTG index date per patient
+
+Min date with **first DTG record for each patient** was then calculated.
+
+```{r}
+dtg_index_by_patient = tblART[dtg == 1, c("patient", "art_sd")]
+
+dtg_index_by_patient = dtg_index_by_patient[, .SD[which.min(art_sd)], by = c("patient")]
+
+setnames(dtg_index_by_patient, "art_sd", "dtg_min_pat")
+
+tblBAS = merge(tblBAS, dtg_index_by_patient,
+               by = "patient",
+               all.x = TRUE, all.y = FALSE
+)
+
+# additional binary indicator
+tblBAS[, dtg := 0]
+tblBAS[!is.na(dtg_min_pat), dtg := 1]
+
+# frq(tblBAS, dtg)
+```
+
+
+## DTG index date per program
+
+Index date for each cohort was then created taking first treatment with DTG recorded.  
+
+```{r}
+dtg_index_by_program = tblART[dtg == 1, c("program", "art_sd")]
+
+dtg_index_by_program = dtg_index_by_program[, .SD[which.min(art_sd)], by = "program"][order(program)]
+
+setnames(dtg_index_by_program, "art_sd", "dtg_min_program")
+
+tblBAS = merge(tblBAS, dtg_index_by_program,
+               by = "program",
+               all.x = TRUE, all.y = FALSE
+)
+
+```
+
+*Data driven* implementation date by program:  
+
+```{r echo=FALSE}
+dtg_index_by_program[order(dtg_min_program), ] %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+**Note:** *this implementation date is highly sensitive to the treatment of outliers (early records) in each program.* Some reasonable exclusions need to be performed first in order to make this work. See section on this topic below.  
+
+
+
+## Exclusion: early DTG outliers
+
+Excluding patients with DTG before implementation date in each country.  
+
+**Note different method for AfA program.**  
+
+### AfA
+
+`r nrow(tblART[program == "AfA" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "AfA" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "AfA" & dtg == 1, ]$art_sd))
+```
+
+*There is a large chunk of records starting before the official adoption rate in ZAF but as data come from private program this is expected to a certain degree.*  
+
+```{r echo=FALSE}
+frq(tblART[program == "AfA" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "AfA" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+-not using (start of ADVANCE trial) definition anymore
+`r nrow(exclude)` patients with records **dated before `2017-02-01`** (start of ADVANCE trial) were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### GUGULETHU
+
+`r nrow(tblART[program == "GUGULETHU" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "GUGULETHU" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "GUGULETHU" & dtg == 1, ]$art_sd))
+```
+
+**All** started before the adoption date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "GUGULETHU" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "GUGULETHU" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### HARRIETSHEZI
+
+`r nrow(tblART[program == "HARRIETSHEZI" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "HARRIETSHEZI" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "HARRIETSHEZI" & dtg == 1, ]$art_sd))
+```
+
+<!-- Few started before the adoption date and were excluded:   -->
+
+```{r eval=FALSE, include=FALSE}
+frq(tblART[program == "HARRIETSHEZI" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r eval=FALSE, include=FALSE}
+exclude = unique(tblART[program == "HARRIETSHEZI" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+<!-- `r nrow(exclude)` patients with early records were excluded from all datasets.   -->
+
+```{r eval=FALSE, include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### HLABISA
+
+`r nrow(tblART[program == "HLABISA" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "HLABISA" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "HLABISA" & dtg == 1, ]$art_sd))
+```
+
+Few started before the adoption date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "HLABISA" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "HLABISA" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### KHAYELITSHA
+
+`r nrow(tblART[program == "KHAYELITSHA" & dtg == 1, ])` records for the whole cohort. With some **clearly implausible** dates:  
+
+```{r echo=FALSE}
+# head(tblART[program == "KHAYELITSHA" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "KHAYELITSHA" & dtg == 1, ]$art_sd))
+```
+
+But only small chunk started before the adoption date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "KHAYELITSHA" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "KHAYELITSHA" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### KHETHIMPILO
+
+Only `r nrow(tblART[program == "KHETHIMPILO" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "KHETHIMPILO" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "KHETHIMPILO" & dtg == 1, ]$art_sd))
+```
+
+**All** started before the adoption date and were excluded: 
+
+```{r echo=FALSE}
+frq(tblART[program == "KHETHIMPILO" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "KHETHIMPILO" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### RAHIMAMOOSA
+
+`r nrow(tblART[program == "RAHIMAMOOSA" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "RAHIMAMOOSA" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "RAHIMAMOOSA" & dtg == 1, ]$art_sd))
+```
+
+Then only a handful from the time before official date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "RAHIMAMOOSA" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "RAHIMAMOOSA" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### REDCROSS
+
+`r nrow(tblART[program == "REDCROSS" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "REDCROSS" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "REDCROSS" & dtg == 1, ]$art_sd))
+```
+
+Few started before the adoption date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "REDCROSS" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "REDCROSS" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.  
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### THEMBALETHU
+
+`r nrow(tblART[program == "THEMBALETHU" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "THEMBALETHU" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "THEMBALETHU" & dtg == 1, ]$art_sd))
+```
+
+Chunk started before the adoption date and were excluded:  
+
+```{r echo=FALSE}
+frq(tblART[program == "THEMBALETHU" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "THEMBALETHU" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### TYGERBERG
+
+`r nrow(tblART[program == "TYGERBERG" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "TYGERBERG" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "TYGERBERG" & dtg == 1, ]$art_sd))
+```
+
+Few started before the adoption date and were excluded: 
+
+```{r echo=FALSE}
+frq(tblART[program == "TYGERBERG" & dtg == 1, ], art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "TYGERBERG" & dtg == 1 & art_sd < dtg_recomend[country == "ZAF", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### LIGHTHOUSE
+
+`r nrow(tblART[program == "LIGHTHOUSE" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "LIGHTHOUSE" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "LIGHTHOUSE" & dtg == 1, ]$art_sd))
+```
+
+Few started before the adoption date and were excluded: 
+
+```{r echo=FALSE}
+frq(tblART[program == "LIGHTHOUSE" & dtg == 1, ], art_sd < dtg_recomend[country == "MWI", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "LIGHTHOUSE" & dtg == 1 & art_sd < dtg_recomend[country == "MWI", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### NEWLANDS
+
+`r nrow(tblART[program == "NEWLANDS" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "NEWLANDS" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "NEWLANDS" & dtg == 1, ]$art_sd))
+```
+
+Again, vast majority is ok in terms of adoption date:  
+
+```{r echo=FALSE}
+frq(tblART[program == "NEWLANDS" & dtg == 1, ], art_sd < dtg_recomend[country == "ZWE", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "NEWLANDS" & dtg == 1 & art_sd < dtg_recomend[country == "ZWE", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### SMARTLES
+
+`r nrow(tblART[program == "SMARTLES" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "SMARTLES" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "SMARTLES" & dtg == 1, ]$art_sd))
+```
+
+Again, vast majority is ok:  
+
+```{r echo=FALSE}
+frq(tblART[program == "SMARTLES" & dtg == 1, ], art_sd < dtg_recomend[country == "LSO", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "SMARTLES" & dtg == 1 & art_sd < dtg_recomend[country == "LSO", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### SMARTMOZ
+
+`r nrow(tblART[program == "SMARTMOZ" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "SMARTMOZ" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "SMARTMOZ" & dtg == 1, ]$art_sd))
+```
+
+Again, vast majority is ok:  
+
+```{r echo=FALSE}
+frq(tblART[program == "SMARTMOZ" & dtg == 1, ], art_sd < dtg_recomend[country == "MOZ", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "SMARTMOZ" & dtg == 1 & art_sd < dtg_recomend[country == "MOZ", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### SMARTZIM
+
+`r nrow(tblART[program == "SMARTZIM" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "SMARTZIM" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "SMARTZIM" & dtg == 1, ]$art_sd))
+```
+
+Again, vast majority is ok:  
+
+```{r echo=FALSE}
+frq(tblART[program == "SMARTZIM" & dtg == 1, ], art_sd < dtg_recomend[country == "ZWE", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "SMARTZIM" & dtg == 1 & art_sd < dtg_recomend[country == "ZWE", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+### CIDRZ
+
+`r nrow(tblART[program == "CIDRZ" & dtg == 1, ])` records for the whole cohort.  
+
+```{r echo=FALSE}
+# head(tblART[program == "CIDRZ" & dtg == 1, ][order(art_sd)], n = 10)
+frq(year(tblART[program == "CIDRZ" & dtg == 1, ]$art_sd))
+```
+
+There is chunk of records from before the adoption date:  
+
+```{r echo=FALSE}
+frq(tblART[program == "CIDRZ" & dtg == 1, ], art_sd < dtg_recomend[country == "ZMB", dtg_recomend_d])
+```
+
+```{r include=FALSE}
+exclude = unique(tblART[program == "CIDRZ" & dtg == 1 & art_sd < dtg_recomend[country == "ZMB", dtg_recomend_d], ][, .(patient)])
+```
+
+`r nrow(exclude)` patients with early records were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+```{r include=FALSE}
+rm(exclude); gc()
+```
+
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Repeating ART checks on tblBAS
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+This time taking into account information from `tblART`.  
+
+## Exclusion: incomplete ART details 2 - missing date
+
+We still have patients who have indication of ART start but have no ART start date.   
+
+```{r echo=FALSE}
+# View(tblBAS[recart_y == 1 & is.na(recart_d), ])
+# frq(tblBAS, is.na(recart_d))
+# frq(tblBAS[is.na(recart_d), ], recart_y)
+frq(tblBAS, recart_y == 1 & is.na(recart_d))
+```
+
+Mostly clustered in `CIDRZ`  
+
+```{r echo=FALSE}
+frq(tblBAS[recart_y == 1 & is.na(recart_d), ], program)
+```
+
+Excluding those patients missing ART start date
+```{r}
+exclude = unique(tblBAS[recart_y ==1 & is.na(recart_d), ][, .(patient)])
+```
+
+`r nrow(exclude)` patients missing ART start date were excluded from all datasets.    
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+```{r include=FALSE}
+rm(exclude); gc()
+```
+
+## Exclusion: incomplete ART details 3 - no ART 
+
+We still have patients that 'officially' *never started ART* with `recart_y` indicating 'No' and no `recart_d` date but having records in `tblART`. These patient has already been excluded.
+
+```{r echo=FALSE}
+# frq(tblBAS, recart_y)
+# View(tblBAS[recart_y == 0 & is.na(recart_d), ])
+# View(tblBAS[patient == "RMRM006462", ])
+# View(tblART_end[patient == "RMRM006462", ])
+
+# frq(tblBAS, recart_y == 0)
+# frq(tblBAS, is.na(recart_d))
+
+frq(tblBAS, recart_y == 0 & is.na(recart_d))
+```
+
+Now clearly clustered in `AfA`:  
+
+```{r echo=FALSE}
+frq(tblBAS[recart_y == 0 & is.na(recart_d), ], program)
+```
+
+## Exclusion: incomplete ART details 4 - unknown ART status
+
+We still have patients with *Missing* or *Unknown* status on the *Has the patient ever received antiretroviral treatment?* variable (all with missing `recart_d`). These patients have already been excluded.
+
+```{r echo=FALSE}
+# frq(tblBAS[is.na(recart_y), ], is.na(recart_d))
+# frq(tblBAS, is.na(recart_y) & is.na(recart_d))
+frq(tblBAS, is.na(recart_y))
+```
+
+Vast majority in `AfA` again.    
+
+```{r echo=FALSE}
+frq(tblBAS[is.na(recart_y), ], program)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# DTG index date per program
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+Index date for each cohort was then re-created after removing outlier patients taking first treatment with DTG recorded.  
+
+```{r}
+dtg_index_by_program = tblART[dtg == 1, c("program", "art_sd")]
+
+dtg_index_by_program = dtg_index_by_program[, .SD[which.min(art_sd)], by = "program"][order(program)]
+
+setnames(dtg_index_by_program, "art_sd", "dtg_min_program")
+
+dtg_index_by_program = merge(dtg_index_by_program,
+                             unique(tblCENTER[, .(program, dtg_recomend_d)]),
+                             by = "program",
+                             all.x = TRUE, all.y = FALSE
+)
+
+```
+
+*Data driven* implementation date by program:  
+
+```{r echo=FALSE}
+dtg_index_by_program[order(dtg_min_program), ] %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+*Data driven* implementation date before national adoption date by program:  
+
+```{r eval=FALSE, include=FALSE}
+dtg_index_by_program[dtg_min_program < dtg_recomend_d, ] %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+**Note:** *this implementation date is highly sensitive to the treatment of outliers (early records) in each program.* Some reasonable exclusions need to be performed first in order to make this work. See section on this topic above.  
+
+
+<!-- ----------------------------------------------------- -->
+
+# Exclusion: programes without DTG adoption
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+```{r include=FALSE}
+tblBAS[, dtg_min_program := NULL]
+
+tblBAS = merge(tblBAS,
+               dtg_index_by_program,
+               by = "program",
+               all.x = TRUE, all.y = FALSE
+)
+```
+
+We have patients from program that didn't initiate DTG:  
+
+```{r echo=FALSE}
+frq(tblBAS, is.na(dtg_min_program))
+```
+
+Coming from:  
+
+```{r echo=FALSE}
+frq(tblBAS[is.na(dtg_min_program), ], program)
+```
+
+**These programs are now excluded!**  
+
+```{r include=FALSE}
+tblBAS = tblBAS[!is.na(dtg_min_program), ]
+
+tblLTFU = setDT(tblLTFU)[tblBAS[, .(patient)], on = c("patient")]
+
+tblART = setDT(tblART)[tblBAS[, .(patient)], on = c("patient")]
+
+program_close_d = setDT(program_close_d)[dtg_index_by_program[, .(program)], on = c("program")]
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# tblBAS exclusions
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+### Age at start of FU
+
+Discussed more thoroughly in [#42](https://github.com/IeDEA-SA/IeDEA_DTG/issues/42).  
+
+```{r eval=FALSE, include=FALSE}
+# dates check
+frq(tblBAS, is.na(dtg_min_program))
+frq(tblBAS, is.na(recart_d))
+```
+
+### Patients newly starting ART after DTG adoption date
+
+Age at ART start
+
+```{r echo=TRUE}
+tblBAS[recart_d >= dtg_recomend_d, age := floor(lubridate::interval(start = birth_d, end = recart_d) / lubridate::duration(n = 1, unit = "years"))]
+```
+
+### Patients already on ART at DTG adoption date
+
+Age at dtg_recomend_d
+
+```{r echo=TRUE}
+tblBAS[recart_d < dtg_recomend_d, age := floor(lubridate::interval(start = birth_d, end = dtg_recomend_d) / lubridate::duration(n = 1, unit = "years"))]
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(tblBAS, is.na(age))
+```
+
+
+## Include adults (>=20 years), exclude if < 20 years old
+
+Age of patients at program (number):
+
+
+```{r echo=FALSE}
+ggplot(data=tblBAS, aes(x=age)) +
+  geom_histogram()+
+  facet_wrap(~ program, scales = "free_y") +
+  geom_vline(aes(xintercept = 20), colour="red")
+
+```
+
+Age of patients at program (density):
+
+```{r echo=FALSE}
+ggplot(data=tblBAS, aes(x=age)) +
+  geom_histogram(aes(y=stat(density)), binwidth = 5) +
+  scale_y_continuous(labels = percent ) +
+  facet_wrap(~ program) +
+  geom_vline(aes(xintercept = 20), colour="red")
+```
+
+
+Keeping individuals 20 years and older only.  
+
+```{r echo=FALSE}
+# summary(tblBAS$age)
+frq(tblBAS, age >= 20)
+```
+
+```{r include=FALSE}
+tblBAS = tblBAS[age >= 20, ]
+
+exclude = unique(tblBAS[age<20, ][, .(patient)])
+
+# exclusion needs to reapplied
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+
+rm(exclude); gc()
+```
+
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+### Age categorical vars  
+
+```{r echo=FALSE}
+tblBAS = tblBAS[, age_cat1 := cut(age, 
+                                  breaks = c(seq(20, 70, 10), 100),
+                                  include.lowest = TRUE,
+                                  right = FALSE)]
+frq(tblBAS, age_cat1)
+
+tblBAS = tblBAS[, age_cat2 := cut(age, 
+                                  breaks = c(20, 50, 100),
+                                  include.lowest = TRUE,
+                                  right = FALSE)]
+frq(tblBAS, age_cat2)
+```
+
+```{r echo=FALSE, eval=FALSE}
+ggplot(tblBAS, aes(age_cat1)) + 
+  geom_bar() + 
+  theme_minimal() +
+  xlab("Age at ART start") + ylab("Number of patients") + 
+  facet_wrap(vars(program), scales = "free_y")
+```
+
+```{r echo=FALSE, eval=FALSE}
+ggplot(tblBAS, aes(age_cat2)) + 
+  geom_bar() + 
+  theme_minimal() +
+  xlab("Age at ART start") + ylab("Number of patients") + 
+  facet_wrap(vars(program), scales = "free_y")
+```
+
+## Exclude: programes < 6 months of data after adoption
+
+Find time between dtg_min_program and max_close_d
+
+```{r include=FALSE}
+exclude = merge(program_close_d, dtg_index_by_program)[, diff := as.numeric(difftime(max_close_d, dtg_min_program, units = "days"))]
+```
+
+```{r echo=FALSE}
+exclude %>%
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE) %>% 
+  row_spec(which(exclude$diff < 180), bold = TRUE, color = "red")
+```
+
+**Note:** *in red we see programs that have less than 6 months of data available.* Maximum date per cohort was used to define the upper boundary.
+
+**Note:** *this check's result is highly sensitive to the treatment of outliers (early records) in each program.* See section on this topic above.
+
+Programs with < 6 months of FU from dtg_min_program to max_close_d
+
+```{r}
+exclude = exclude[diff < 180, ][, .(program)]
+```
+
+```{r eval=FALSE, include=FALSE}
+frq(exclude, program)
+```
+
+Exclude programs from all tables
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("program")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("program")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("program")]
+```
+
+
+```{r include=FALSE}
+rm(exclude); gc()
+```
+
+## Count and order of ART records
+
+Treatment order and overall number of treatments were then calculated for each record.
+
+```{r}
+setorder(tblART, patient, art_sd, art_ed, na.last = TRUE)
+
+tblART[, group_id := rleid(patient, art_sd)][, trt_order := group_id - min(group_id) + 1L, .(patient)][, group_id := NULL]
+# tblART_end[, table(trt_order)]
+
+tblART[, trt_count := max(trt_order), by = patient][, trt_count := as.numeric(trt_count)]
+# tblART_end[, table(trt_count)]
+
+```
+
+
+```{r include=FALSE}
+tblART_start = tblART
+setorder(tblART_start, patient, art_sd, na.last = TRUE)
+
+tblART_start[, group_id := rleid(patient, art_sd)][, trt_order := group_id - min(group_id) + 1L, .(patient)][, group_id := NULL]
+# tblART_start[, table(trt_order)]
+tblART_start[, trt_count := max(trt_order), by = patient][, trt_count := as.numeric(trt_count)]
+# tblART_end[, table(trt_count)]
+```
+
+Frequencies of these orders:  
+
+```{r echo=FALSE}
+summary(tblART[trt_order == trt_count, ]$trt_order)
+```
+
+Alternatively, using only start date for collapse:  
+
+```{r echo=FALSE}
+summary(tblART_start[trt_order == trt_count, ]$trt_order)
+```
+
+<!-- ----------------------------------------------------- -->
+
+
+# Recalculate ART naive
+
+We still have significant amount of of patients without indication of 'treatment naive' status. Issue is also discussed in [#13](https://github.com/IeDEA-SA/IeDEA_DTG-prognostic/issues/13).  
+
+For patients with unknown ART naive status:
+
+If first indication of receiving ART is more than 7 days prior to enrolment, then the patient with unknown ART naive status will be revised to not ART naive at enrolment, rev_naive_y ==0. 
+
+If first indication of receiving ART is not more than 7 days prior to enrolment, then the patient with unknown ART naive status will be revised to being ART naive at enrolment, rev_naive_y ==1.
+
+
+```{r echo=FALSE}
+frq(tblBAS, naive_y)
+```
+
+```{r}
+calculated = unique(tblART[trt_order == 1, .(patient, calc_recart_d = art_sd)])
+
+tblBAS = merge(tblBAS, calculated, by = "patient", all.x = TRUE, all.y = FALSE)
+
+
+# frq(tblBAS, is.na(recart_d))
+# frq(tblBAS, is.na(enrol_d))
+
+# minimum between reported and calculated
+tblBAS[, temp := pmin(recart_d, calc_recart_d)]
+
+#tblBAS = tblBAS[, temp := recart_d]
+
+#tblBAS = tblBAS[is.na(naive_y) & !is.na(enrol_d), temp := recart_d]
+
+tblBAS = tblBAS[is.na(naive_y) & !is.na(enrol_d), diff := as.numeric(difftime(temp, enrol_d, units = "days"))]
+
+# frq(tblBAS, !is.na(diff))
+
+tblBAS[, rev_naive_y := naive_y]
+
+tblBAS = tblBAS[is.na(naive_y) & !is.na(enrol_d) & diff < -7, rev_naive_y := 0]
+
+tblBAS = tblBAS[is.na(naive_y) & !is.na(enrol_d) & diff >= -7, rev_naive_y := 1]
+
+frq(tblBAS, rev_naive_y)
+
+```
+
+Compare naive_y and rev_naive_y
+
+```{r echo=FALSE}
+with(tblBAS, table(naive_y, rev_naive_y, useNA = "always"))
+```
+
+Results by program:  
+
+```{r echo=FALSE}
+CrossTable(tblBAS$program, tblBAS$rev_naive_y,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+```{r include=FALSE}
+tblBAS[, c("temp", "diff") := NULL]
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# tblART Indicator: DTG first 
+
+Simplified `tblART` (*using start date only!*) was used to generate the order and count of treatments for each patient.  
+
+`r number(nrow(unique(tblART[trt_order == 1 & dtg == 1, ][, .(patient)])), big.mark = ",")` unique patients were found this way:    
+
+
+```{r echo=FALSE}
+# View(tblART_start[trt_order == 1 & dtg == 1, ])
+
+frq(tblART[trt_order == 1 & dtg == 1, ], program)
+```
+
+*These patients were flagged in `tblBAS` dataset with binary indicator `dtg_first`.*  
+
+```{r include=FALSE}
+tblART[, dtg_first := 0][trt_order == 1 & dtg == 1, dtg_first := 1]
+
+temp = unique(tblART[dtg_first == 1, .(patient, art_sd, dtg_first)])
+
+tblBAS = merge(tblBAS, temp, by = "patient", all.x = TRUE, all.y = FALSE)
+
+tblBAS[is.na(dtg_first), dtg_first := 0]
+```
+
+Exclude patients if recart_d is before dtg_min_pat & dtg_first == 1, as this means we are missing ART data in tblART.
+
+```{r include=FALSE}
+frq(tblBAS[dtg_first ==1], art_sd ==dtg_min_pat)
+
+exclude <- tblBAS %>% filter(recart_d < art_sd & dtg_first==1)
+```
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+```{r include=FALSE}
+tblBAS[, art_sd := NULL]
+rm(exclude); gc()
+rm(temp); gc()
+```
+
+
+```{r include=FALSE}
+# frq(tblART_start, dtg_first)
+frq(tblBAS, dtg_first)
+```
+
+This of course varies by program:  
+
+```{r echo=FALSE}
+
+tblBAS_temp <- tblBAS %>% filter(recart_d >= dtg_recomend_d)
+CrossTable(tblBAS_temp$program, tblBAS_temp$dtg_first,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+<!-- ----------------------------------------------------- -->
+
+# tblART Indicator: DTG switch 
+
+
+```{r echo=FALSE}
+# View(tblART_start[trt_order == 1 & dtg == 1, ])
+
+tblART_temp <- tblART %>% select(patient, dtg, dtg_first, art_sd) %>% filter(dtg ==1) %>%
+  group_by(patient) %>% mutate(dtg_first = max(dtg_first)) %>% select(-c(dtg))
+
+tblART_temp <- tblART_temp %>% filter(dtg_first != 1)
+
+tblART_temp = data.table(tblART_temp)
+
+```
+
+*These patients were flagged in `tblBAS` dataset with binary indicator `dtg_switch`.*  
+
+```{r include=FALSE}
+temp = tblART_temp[, .SD[which.min(art_sd)], by = "patient"]
+
+temp[, dtg_switch :=1]
+temp[, dtg_first := NULL]
+
+tblBAS = merge(tblBAS, temp, by = "patient", all.x = TRUE, all.y = FALSE)
+
+tblBAS[is.na(dtg_switch), dtg_switch := 0]
+
+frq(tblBAS, dtg_switch)
+
+# frq(tblBAS[dtg_switch ==1], art_sd == dtg_min_pat)
+
+```
+
+Exclude patients if recart_d is after dtg_min_pat & dtg_switch == 1, as this means they had dtg prior to starting ART.
+
+```{r include=FALSE}
+exclude <- tblBAS %>% filter(dtg_min_pat < recart_d & dtg_switch ==1)
+```
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+```{r include=FALSE}
+tblART[, dtg_first := NULL]
+tblBAS[, art_sd := NULL]
+rm(exclude); gc()
+rm(temp); gc()
+```
+
+```{r include=FALSE}
+# frq(tblART_start, dtg_first)
+frq(tblBAS, dtg_switch)
+```
+
+This of course varies by program:  
+
+```{r echo=FALSE}
+
+tblBAS_temp <- tblBAS %>% filter(recart_d < dtg_recomend_d)
+CrossTable(tblBAS_temp$program, tblBAS_temp$dtg_switch,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+Exclude patients if recart_d is after dtg_min_pat, as this means they had dtg prior to starting ART.
+
+```{r}
+
+exclude <- tblBAS %>% filter(dtg_min_pat < recart_d)
+```
+
+```{r include=FALSE}
+tblART = setDT(tblART)[!exclude, on = c("patient")]
+tblBAS = setDT(tblBAS)[!exclude, on = c("patient")]
+tblLTFU = setDT(tblLTFU)[!exclude, on = c("patient")]
+```
+
+```{r include=FALSE}
+tblART[, dtg_first := NULL]
+tblBAS[, art_sd := NULL]
+rm(exclude); gc()
+rm(temp); gc()
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# tblBAS  Indicator: DTG status
+
+
+Patients currently in tblBAS.
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+DTG status: 0 = no dtg, 1 = dtg first, 2 = dtg switch
+
+```{r include=FALSE}
+tblBAS[is.na(dtg_min_pat), dtg_status := 0]
+tblBAS[dtg_first == 1, dtg_status := 1]
+tblBAS[dtg_switch == 1, dtg_status := 2]
+tblBAS[, dtg_status_txt := factor(dtg_status, levels = c(0, 1, 2),
+                          labels = c("No DTG", "DTG first", "DTG switch"))]
+frq(tblBAS, dtg_status_txt)
+```
+
+
+```{r}
+sjPlot::tab_xtab(tblBAS$program,
+                 tblBAS$dtg_status_txt,
+                 show.row.prc = TRUE, show.summary = FALSE)
+```
+
+## Exclusions: not naive & start ART after adoption date
+
+Newly recalculated naive status was then used to exclude patients who:  
+
+> were not ART-naive when they initiated ART at the facility on or after the DTG adoption date   
+
+```{r echo=FALSE}
+frq(tblBAS, rev_naive_y == 0 & recart_d >= dtg_recomend_d)
+```
+
+Programs affected:  
+
+```{r echo=FALSE}
+frq(tblBAS[rev_naive_y == 0 & recart_d >= dtg_recomend_d, ], program)
+```
+
+```{r include=FALSE}
+tblBAS[, temp := 0]
+tblBAS[rev_naive_y == 0 & recart_d >= dtg_recomend_d, temp := 1]
+frq(tblBAS, temp)
+
+tblBAS = tblBAS[temp == 0, ]
+tblBAS[, temp := NULL]
+
+# exclusion needs to reapplied
+tblLTFU = tblLTFU[patient %in% tblBAS$patient, ]
+tblART = tblART[patient %in% tblBAS$patient, ]
+
+gc()
+```
+
+
+## tblART preliminary DTG counts
+
+After these exclusions we have following DTG records (*among all ARTs - not patients!*):    
+
+```{r echo=FALSE}
+# frq(tblART, dtg)
+frq(tblART, dtg)
+```
+
+Across programs:  
+
+```{r echo=FALSE}
+CrossTable(tblART$program, tblART$dtg,
+           prop.c = FALSE, prop.t = FALSE, prop.chisq = FALSE
+)
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Number of patients in tblBAS
+
+
+```{r echo=FALSE}
+maxclose <- tblBAS %>% select(program, max_close_d) %>%
+  arrange(program) %>%
+  group_by(program,  max_close_d) %>%
+  mutate(Npatients = n()) %>%
+  distinct()
+  
+maxclose %>% 
+  kbl() %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  column_spec(1, italic = TRUE) %>%
+  row_spec(1, italic = FALSE)
+```
+
+
+
+<!-- ----------------------------------------------------- -->
+
+# Saving data 
+
+## Local  
+
+This state of data is preserved in `data` directory. `fst` files for R and `dta` files for Stata are saved.    
+
+```{r}
+write_fst(tblBAS, "data_temp/tblBAS_v002.fst")
+# tblBAS = data.table(read_fst("data_temp/tblBAS_v002.fst"))
+
+write_fst(tblLTFU, "data_temp/tblLTFU_v002.fst")
+# tblLTFU = data.table(read_fst("data_temp/tblLTFU_v002.fst"))
+
+write_fst(tblART, "data_temp/tblART_v002.fst")
+# tblART = data.table(read_fst("data_temp/tblART_v002.fst"))
+
+write_fst(tblART_start, "data_temp/tblART_start_v002.fst")
+# tblART_start = data.table(read_fst("data_temp/tblART_start_v002.fst"))
+
+write_fst(dtg_index_by_program, "data_temp/dtg_index_by_program_v002.fst")
+# dtg_index_by_program = data.table(read_fst("data_temp/dtg_index_by_program_v002.fst"))
+
+write_fst(dtg_index_by_patient, "data_temp/dtg_index_by_patient_v002.fst")
+# dtg_index_by_patient = data.table(read_fst("data_temp/dtg_index_by_patient_v002.fst"))
+
+```
+
+<!-- ----------------------------------------------------- -->
+
+# Content & missings
+
+## `tblBAS`
+
+```{r echo=FALSE}
+skimr::skim(tblBAS[,.SD, .SDcols = !c("age_cat1", "age_cat2")])
+```
+
+
+<!-- ----------------------------------------------------- -->
+
+# Computing Environment
+
+```{r echo=FALSE, results='asis'}
+report::report(sessionInfo())
+```
+
+<!-- ----------------------------------------------------- -->
