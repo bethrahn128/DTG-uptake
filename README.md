@@ -4,7 +4,7 @@ This repository shares the R coding files used to produce the output included in
 
 ### IWHOD 2024 conference abstract and poster presentation: 
 
-> Trends in dolutegravir uptake by sex in Southern Africa. Zaniewski E, Fox MP, Fatti G, Muula GK, Mbewe S, Romo M, de Waal R, Egger M, Rohner E. [IWHOD 2024](http://https://iwhod.org/)
+> Trends in dolutegravir uptake by sex in Southern Africa. Zaniewski E, Fox MP, Fatti G, Muula GK, Mbewe S, Romo M, de Waal R, Egger M, Rohner E. [IWHOD 2024](https://iwhod.org/)
 
 ## Data
 This analysis included HIV cohort data from The International epidemiology Databases to Evaluate AIDS Southern Africa collaboration (https://www.iedea-sa.org), which collects de-identified patient-level data from participating cohorts in Lesotho, Malawi, Mozambique, South Africa, Zambia and Zimbabwe. 
