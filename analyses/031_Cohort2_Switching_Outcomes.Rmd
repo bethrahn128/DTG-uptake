@@ -1,7 +1,7 @@
 ---
 title: "IeDEA SA256 DTG uptake <br> 021 Switching cohort Outcomes"
 subtitle: " "
-author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+author: ""
 date: "`r Sys.Date()`"
 output:
   rmdformats::robobook:

@@ -1,7 +1,7 @@
 ---
 title: "IeDEA SA256 DTG uptake: 03 Paper Fig 2 by ctry, sex & age"
 subtitle: " "
-author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+author: "Elizabeth Zaniewski, Eliane Rohner"
 date: "`r Sys.Date()`"
 output:
   rmdformats::robobook:

@@ -1,7 +1,7 @@
 ---
 title: "SA256 DTG uptake <br> tblCENTER, tblBAS, tblLTFU"
 subtitle: " "
-author: "Radek Panczak, Eliane Rohner, Elizabeth Zaniewski"
+author: ""
 date: "`r Sys.Date()`"
 output:
   rmdformats::robobook:

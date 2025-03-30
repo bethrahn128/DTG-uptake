@@ -1,7 +1,7 @@
 ---
 title: "SA256 DTG uptake <br> Manuscript_Table1_baseline_chara"
 subtitle: " "
-author: "Elizabeth Zaniewski,Radek Panczak, Eliane Rohner"
+author: "Elizabeth Zaniewski, Eliane Rohner"
 date: "`r Sys.Date()`"
 output:
   rmdformats::robobook:
